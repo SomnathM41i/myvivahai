@@ -1,5 +1,5 @@
 from pathlib import Path
-from backend.app.ai.llm_client_GROQ import call_llm_json
+from app.ai.llm_client_GROQ import call_llm_json
 from app.core.logger import logger
 
 PROMPT = (Path(__file__).parent.parent / "prompts" / "biodata_prompt.txt").read_text()

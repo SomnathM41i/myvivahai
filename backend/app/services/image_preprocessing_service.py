@@ -9,13 +9,32 @@ except ImportError:
 
 
 def preprocess_image(file_path: str) -> str:
-    if not CV2_AVAILABLE:
-        logger.warning("OpenCV not available — skipping preprocessing")
-        return file_path
     img = cv2.imread(file_path)
+
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    denoised = cv2.fastNlMeansDenoising(gray, h=10)
-    _, thresh = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    out = file_path.replace(".", "_processed.")
-    cv2.imwrite(out, thresh)
-    return out
+
+    # upscale
+    gray = cv2.resize(gray, None, fx=2, fy=2)
+
+    # denoise
+    gray = cv2.fastNlMeansDenoising(gray)
+
+    # sharpen
+    kernel = [[0,-1,0],[-1,5,-1],[0,-1,0]]
+    kernel = cv2.UMat(kernel)
+
+    sharpened = cv2.filter2D(gray, -1, kernel)
+
+    # threshold
+    _, thresh = cv2.threshold(
+        sharpened,
+        0,
+        255,
+        cv2.THRESH_BINARY + cv2.THRESH_OTSU
+    )
+
+    output = file_path.replace(".", "_processed.")
+
+    cv2.imwrite(output, thresh)
+
+    return output
