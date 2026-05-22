@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Backgro
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_session
 from app.core.auth import get_current_user
-from app.core.constants import IMAGE_EXTENSIONS
+from app.core.constants import IMAGE_EXTENSIONS, UploadStatus
 from app.config import settings
 from app.repositories.upload_repository import UploadRepository
 from app.services.profile_service import process_upload
@@ -44,15 +44,67 @@ async def upload_biodata(
 
 
 @router.get("/", response_model=list[UploadResponseSchema])
-async def list_uploads(db: AsyncSession = Depends(get_session),
-                        current_user=Depends(get_current_user)):
+async def list_uploads(
+    db: AsyncSession = Depends(get_session),
+    current_user=Depends(get_current_user),
+):
     return await UploadRepository(db).get_by_user(current_user.id)
 
 
 @router.get("/{upload_id}/status", response_model=UploadStatusSchema)
-async def upload_status(upload_id: int, db: AsyncSession = Depends(get_session),
-                         current_user=Depends(get_current_user)):
+async def upload_status(
+    upload_id: int,
+    db: AsyncSession = Depends(get_session),
+    current_user=Depends(get_current_user),
+):
     upload = await UploadRepository(db).get_by_id(upload_id)
     if not upload or upload.user_id != current_user.id:
         raise HTTPException(404, "Upload not found")
+    return upload
+
+
+@router.delete("/{upload_id}", status_code=204)
+async def delete_upload(
+    upload_id: int,
+    db: AsyncSession = Depends(get_session),
+    current_user=Depends(get_current_user),
+):
+    """Delete an upload record and its stored file."""
+    repo = UploadRepository(db)
+    upload = await repo.get_by_id(upload_id)
+    if not upload or upload.user_id != current_user.id:
+        raise HTTPException(404, "Upload not found")
+    # Remove file from disk
+    try:
+        Path(upload.file_path).unlink(missing_ok=True)
+    except Exception:
+        pass  # Don't fail if file already gone
+    await repo.delete(upload)
+
+
+@router.post("/{upload_id}/retry", response_model=UploadResponseSchema)
+async def retry_upload(
+    upload_id: int,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_session),
+    current_user=Depends(get_current_user),
+):
+    """Re-queue a failed or pending upload for AI processing."""
+    repo = UploadRepository(db)
+    upload = await repo.get_by_id(upload_id)
+    if not upload or upload.user_id != current_user.id:
+        raise HTTPException(404, "Upload not found")
+    if upload.status == UploadStatus.PROCESSING:
+        raise HTTPException(409, "Upload is already processing")
+    if not Path(upload.file_path).exists():
+        raise HTTPException(410, "Source file no longer exists — please re-upload")
+    # Reset status + clear previous error/output
+    upload = await repo.update_status(
+        upload, UploadStatus.PENDING,
+        error_message=None,
+        processed_output=None,
+        profiles_count=0,
+        completed_at=None,
+    )
+    background_tasks.add_task(process_upload, upload.id, db)
     return upload

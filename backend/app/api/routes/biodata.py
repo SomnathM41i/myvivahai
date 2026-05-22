@@ -7,15 +7,18 @@
 import asyncio
 import json
 import uuid
+from pathlib import Path
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
+from app.core.auth import get_current_user
 from app.core.redis import redis_client
 from app.workers.ai_worker import process_upload_task
 from app.database import AsyncSessionLocal
 from app.models.upload_model import Upload
+from app.config import settings
 
 router = APIRouter(prefix="/api/biodata", tags=["biodata"])
 
@@ -27,29 +30,37 @@ ALLOWED_TYPES = {
     "image/webp",
 }
 
+UPLOAD_DIR = Path("storage/uploads")
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
 
 # ── Upload ────────────────────────────────────────────────────────────────
 
 @router.post("/upload")
-async def upload_biodata(file: UploadFile = File(...)):
+async def upload_biodata(
+    file: UploadFile = File(...),
+    current_user=Depends(get_current_user),   # ← auth fixed
+):
     if file.content_type not in ALLOWED_TYPES:
         raise HTTPException(status_code=415, detail=f"Unsupported type: {file.content_type}")
 
     content = await file.read()
-    task_id = str(uuid.uuid4())
+    if len(content) > settings.max_upload_bytes:
+        raise HTTPException(413, f"Exceeds {settings.MAX_UPLOAD_SIZE_MB}MB limit")
 
+    task_id = str(uuid.uuid4())
     ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else "bin"
-    save_path = f"/tmp/biodata_{task_id}.{ext}"
+    stored_name = f"biodata_{task_id}.{ext}"
+    save_path = str(UPLOAD_DIR / stored_name)
+
     with open(save_path, "wb") as f:
         f.write(content)
 
-    # Use actual column names from upload_model.py
-    # user_id is required (FK) — TODO: replace 1 with current_user.id after adding auth dep
     async with AsyncSessionLocal() as db:
         upload = Upload(
-            user_id=1,
+            user_id=current_user.id,           # ← was hardcoded to 1
             original_filename=file.filename,
-            stored_filename=f"biodata_{task_id}.{ext}",
+            stored_filename=stored_name,
             file_type=ext,
             file_path=save_path,
             status="queued",

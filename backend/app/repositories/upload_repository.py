@@ -32,3 +32,7 @@ class UploadRepository:
         await self.db.flush()
         await self.db.refresh(upload)
         return upload
+
+    async def delete(self, upload: Upload) -> None:
+        await self.db.delete(upload)
+        await self.db.flush()

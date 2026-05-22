@@ -22,6 +22,7 @@ async def google_login():
         "&response_type=code"
         "&scope=openid email profile"
         "&access_type=offline"
+        "&prompt=consent"   # ← add this; prevents stale code reuse
     )
     return RedirectResponse(f"https://accounts.google.com/o/oauth2/v2/auth?{params}")
 
@@ -72,7 +73,7 @@ async def google_callback(
     access_token = create_access_token({"sub": str(user.id)})
     refresh_token = create_refresh_token({"sub": str(user.id)})
 
-    frontend_url = "http://localhost:5173"
+    frontend_url = settings.FRONTEND_URL.rstrip("/")  # Ensure no trailing slash
 
     return RedirectResponse(
         url=(
