@@ -2,6 +2,7 @@
 Main AI pipeline: file extraction → AI parsing → DB save.
 Equivalent of BioData-AI services/upload_service.py orchestrator.
 """
+import asyncio
 import json
 from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +16,15 @@ from app.ai.parsers.education_parser import parse_education
 from app.ai.parsers.occupation_parser import parse_occupation
 from app.ai.transformers.response_transformer import merge_parsed_sections
 from app.ai.transformers.schema_mapper import map_to_profile_fields
+
+# Delay between sequential Gemini calls to respect free-tier rate limits (15 req/min).
+# Each call needs ~4s gap → safely under 15/min. Set to 0 on a paid plan.
+_PARSER_DELAY_SECONDS = 4
+
+# How many chars to send per parser. Biodata info is always near the top of the doc;
+# sending the full 188k chars wastes tokens and triggers quota errors.
+# 3000 chars ≈ ~750 tokens — plenty for a single biodata entry.
+_TEXT_LIMIT = 3000
 
 
 async def process_upload(upload_id: int, db: AsyncSession) -> None:
@@ -30,14 +40,34 @@ async def process_upload(upload_id: int, db: AsyncSession) -> None:
         text = _extract_text(upload.file_path, upload.file_type)
         await upload_repo.update_status(upload, UploadStatus.PROCESSING, extracted_text=text)
 
-        # 2. Run AI parsers in parallel
-        import asyncio
-        results = await asyncio.gather(
-            parse_biodata(text), parse_family(text),
-            parse_education(text), parse_occupation(text),
-            return_exceptions=True)
-        biodata, family, education, occupation = [
-            r if isinstance(r, dict) else {} for r in results]
+        # Trim once — all parsers share the same trimmed slice.
+        # Matrimonial biodata always has personal/family/education/occupation info
+        # in the first few hundred chars; no need to send the full document.
+        trimmed = text[:_TEXT_LIMIT]
+        logger.info(f"Text trimmed to {len(trimmed)} chars (original: {len(text)} chars)")
+
+        # 2. Run AI parsers sequentially to avoid Gemini 429 rate-limit errors.
+        #    Firing all 4 at once exhausts both the req/min and token/min quotas.
+        logger.info("Running biodata parser…")
+        biodata = await parse_biodata(trimmed)
+
+        await asyncio.sleep(_PARSER_DELAY_SECONDS)
+        logger.info("Running family parser…")
+        family = await parse_family(trimmed)
+
+        await asyncio.sleep(_PARSER_DELAY_SECONDS)
+        logger.info("Running education parser…")
+        education = await parse_education(trimmed)
+
+        await asyncio.sleep(_PARSER_DELAY_SECONDS)
+        logger.info("Running occupation parser…")
+        occupation = await parse_occupation(trimmed)
+
+        # Normalise: if any parser returned a non-dict (e.g. an Exception), fall back to {}
+        biodata    = biodata    if isinstance(biodata,    dict) else {}
+        family     = family     if isinstance(family,     dict) else {}
+        education  = education  if isinstance(education,  dict) else {}
+        occupation = occupation if isinstance(occupation, dict) else {}
 
         # 3. Merge + map to DB fields
         merged = merge_parsed_sections(biodata, family, education, occupation)

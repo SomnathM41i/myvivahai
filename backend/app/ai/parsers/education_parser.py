@@ -1,4 +1,4 @@
-from app.ai.llm_client import call_llm_json
+from backend.app.ai.llm_client_GROQ import call_llm_json
 from app.core.logger import logger
 
 

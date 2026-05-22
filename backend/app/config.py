@@ -15,7 +15,7 @@ class Settings(BaseSettings):
     GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/auth/google/callback"
 
     GROQ_API_KEY: str = ""
-    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_MODEL: str = ""
     ANTHROPIC_API_KEY: str = ""
 
     STORAGE_BACKEND: str = "local"

@@ -25,6 +25,8 @@ API docs: http://localhost:8000/docs
 
 ## Frontend
 
+
+
 ```bash
 cd frontend
 npm install
@@ -38,6 +40,9 @@ App: http://localhost:5173
 2. Create OAuth 2.0 Client ID → Web application
 3. Add Authorized redirect URI: `http://localhost:8000/api/auth/google/callback`
 4. Copy Client ID & Secret to `backend/.env`
+
+# redis
+    celery -A app.workers.ai_worker worker --loglevel=info
 
 ## Docker (full stack)
 
