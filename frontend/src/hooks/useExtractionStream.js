@@ -1,37 +1,41 @@
 // frontend/src/hooks/useExtractionStream.js
-// Connects to the FastAPI SSE endpoint and delivers live progress events.
+//
+// Opens an EventSource to GET /api/biodata/stream/{taskId} and
+// returns live state: logs, progress %, pipeline stage index, and
+// the final extracted profile once the "done" event arrives.
 
 import { useState, useEffect, useRef, useCallback } from "react";
 
-const STAGES = ["upload", "ocr", "llm", "structure", "save", "done"];
-
+// Maps backend stage names → index in the pipeline array
 const STAGE_INDEX = {
   connected: 0,
-  ocr: 1,
-  llm: 2,
+  ocr:       1,
+  llm:       2,
   structure: 3,
-  save: 4,
-  done: 5,
-  error: -1,
+  save:      4,
+  done:      5,
 };
 
 /**
- * @param {string|null} taskId  — set to a task_id to start streaming, null to idle
- * @returns {{ logs, progress, stageIndex, profile, status, error }}
+ * @param {string|null} taskId  Pass a task_id string to start streaming, null to stay idle.
+ * @returns {{ logs, progress, stageIndex, profile, status, error, reset }}
+ *
+ * status: "idle" | "streaming" | "done" | "error"
  */
 export function useExtractionStream(taskId) {
-  const [logs, setLogs] = useState([]);
-  const [progress, setProgress] = useState(0);
-  const [stageIndex, setStageIndex] = useState(-1);
-  const [profile, setProfile] = useState(null);
-  const [status, setStatus] = useState("idle"); // idle | streaming | done | error
-  const [error, setError] = useState(null);
+  const [logs,        setLogs]       = useState([]);
+  const [progress,    setProgress]   = useState(0);
+  const [stageIndex,  setStageIndex] = useState(0);
+  const [profile,     setProfile]    = useState(null);
+  const [status,      setStatus]     = useState("idle");
+  const [error,       setError]      = useState(null);
   const esRef = useRef(null);
 
   const reset = useCallback(() => {
+    esRef.current?.close();
     setLogs([]);
     setProgress(0);
-    setStageIndex(-1);
+    setStageIndex(0);
     setProfile(null);
     setStatus("idle");
     setError(null);
@@ -40,41 +44,42 @@ export function useExtractionStream(taskId) {
   useEffect(() => {
     if (!taskId) return;
 
-    // Close any previous stream
-    if (esRef.current) esRef.current.close();
-    reset();
+    esRef.current?.close();
+    // Reset state for new task but keep status as streaming
+    setLogs([]);
+    setProgress(0);
+    setStageIndex(0);
+    setProfile(null);
+    setError(null);
     setStatus("streaming");
 
-    const url = `/api/biodata/stream/${taskId}`;
-    const es = new EventSource(url, { withCredentials: true });
+    const es = new EventSource(`/api/biodata/stream/${taskId}`, {
+      withCredentials: true,
+    });
     esRef.current = es;
 
     es.onmessage = (ev) => {
       let data;
-      try {
-        data = JSON.parse(ev.data);
-      } catch {
-        return;
-      }
+      try { data = JSON.parse(ev.data); } catch { return; }
 
       const { stage, pct, log, level, profile: extractedProfile } = data;
 
-      // Append log line
       if (log) {
         setLogs((prev) => [
           ...prev,
-          { time: new Date().toLocaleTimeString(), text: log, level: level || "info" },
+          {
+            time:  new Date().toLocaleTimeString(),
+            text:  log,
+            level: level ?? "info",
+          },
         ]);
       }
 
-      // Progress bar
       if (typeof pct === "number") setProgress(pct);
 
-      // Stage index for pipeline indicator
       const idx = STAGE_INDEX[stage];
-      if (idx !== undefined && idx >= 0) setStageIndex(idx);
+      if (idx !== undefined) setStageIndex(idx);
 
-      // Final state
       if (stage === "done") {
         if (extractedProfile) setProfile(extractedProfile);
         setStatus("done");
@@ -82,22 +87,24 @@ export function useExtractionStream(taskId) {
       }
 
       if (stage === "error") {
-        setError(log || "Extraction failed");
+        setError(log ?? "Extraction failed");
         setStatus("error");
         es.close();
       }
     };
 
     es.onerror = () => {
-      setError("Stream connection lost");
-      setStatus("error");
+      // Only flag as error if we haven't already finished successfully
+      setStatus((prev) => {
+        if (prev === "done") return prev;
+        setError("Stream connection lost — check that the backend is running.");
+        return "error";
+      });
       es.close();
     };
 
-    return () => {
-      es.close();
-    };
-  }, [taskId, reset]);
+    return () => es.close();
+  }, [taskId]);
 
-  return { logs, progress, stageIndex, profile, status, error, stages: STAGES };
+  return { logs, progress, stageIndex, profile, status, error, reset };
 }
