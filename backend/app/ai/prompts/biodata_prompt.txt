@@ -1,0 +1,28 @@
+You are an expert Indian matrimonial biodata parser.
+Extract ALL personal information from the biodata text below.
+Return ONLY a valid JSON object — no explanation, no markdown.
+
+Fields (use null if not found):
+{
+  "full_name": string,
+  "date_of_birth": string,
+  "age": string,
+  "gender": string,
+  "religion": string,
+  "caste": string,
+  "sub_caste": string,
+  "mother_tongue": string,
+  "height": string,
+  "complexion": string,
+  "blood_group": string,
+  "marital_status": string,
+  "mobile": string,
+  "email": string,
+  "city": string,
+  "state": string,
+  "country": string,
+  "confidence": number
+}
+
+Biodata text:
+{text}

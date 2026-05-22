@@ -1,0 +1,37 @@
+version: "3.9"
+
+services:
+  backend:
+    build: ./backend
+    env_file: ./backend/.env
+    volumes:
+      - ./backend/storage:/app/storage
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  celery:
+    build: ./backend
+    command: celery -A app.workers.ai_worker worker --loglevel=info --concurrency=2
+    env_file: ./backend/.env
+    volumes:
+      - ./backend/storage:/app/storage
+    depends_on:
+      - redis
+    restart: unless-stopped

@@ -1,0 +1,19 @@
+Extract family information from this matrimonial biodata.
+Return ONLY valid JSON — no explanation, no markdown.
+
+{
+  "father_name": string,
+  "father_occupation": string,
+  "mother_name": string,
+  "mother_occupation": string,
+  "siblings": string,
+  "brothers": string,
+  "sisters": string,
+  "family_type": string,
+  "family_status": string,
+  "native_place": string,
+  "confidence": number
+}
+
+Text:
+{text}
