@@ -39,7 +39,9 @@ from app.api.upload_routes import router as upload_router
 from app.api.profile_routes import router as profile_router
 from app.api.parser_routes import router as parser_router
 from app.api.dashboard_routes import router as dashboard_router
+from app.api.routes.biodata import router as biodata_router
 
+app.include_router(biodata_router)
 app.include_router(auth_router)
 app.include_router(upload_router)
 app.include_router(profile_router)
