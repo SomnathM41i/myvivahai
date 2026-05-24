@@ -1,10 +1,15 @@
+/**
+ * src/layouts/DashboardLayout.jsx
+ * Added "Files" nav item linking to /files.
+ */
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
-import { LayoutDashboard, Upload, User, Heart, BarChart2, LogOut } from 'lucide-react'
+import { LayoutDashboard, Upload, User, Heart, BarChart2, LogOut, FolderOpen } from 'lucide-react'
 
 const NAV = [
   { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { to: '/upload',    icon: Upload,          label: 'Upload Biodata' },
+  { to: '/files',     icon: FolderOpen,      label: 'Files' },
   { to: '/profile',   icon: User,            label: 'Profile' },
   { to: '/matches',   icon: Heart,           label: 'Matches' },
   { to: '/analytics', icon: BarChart2,       label: 'Analytics' },
