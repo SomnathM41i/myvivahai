@@ -5,50 +5,46 @@ import { getProfileByUploadId, exportProfileJson, exportProfileXlsx } from '../s
 import { Upload, CheckCircle, TrendingUp, FileJson, Sheet, ChevronRight, Sparkles, User, FileText, Loader2 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { useState } from 'react'
+import { motion } from 'framer-motion'
+import { stagger, fadeIn, fadeInUp } from '../utils/animations'
 
-// ── Stat card ─────────────────────────────────────────────────────────────────
 function StatCard({ label, value, icon: Icon, color, bg }) {
   return (
-    <div className="card flex items-center gap-4">
-      <div className={`p-3 rounded-xl ${bg}`}>
+    <motion.div variants={fadeInUp} className="card flex items-center gap-4 p-5">
+      <div className={`p-3 rounded-xl ${bg} shadow-sm`}>
         <Icon size={20} className={color} />
       </div>
       <div>
-        <p className="text-2xl font-bold text-gray-800 leading-none">{value}</p>
-        <p className="text-sm text-gray-500 mt-1">{label}</p>
+        <p className="stat-value text-surface-800">{value}</p>
+        <p className="text-sm text-surface-400 mt-0.5 font-medium">{label}</p>
       </div>
-    </div>
+    </motion.div>
   )
 }
 
-// ── Confidence pill ───────────────────────────────────────────────────────────
 function ConfidencePill({ score }) {
   if (score == null) return null
-  const pct = typeof score === 'number' && score <= 1
-    ? Math.round(score * 100)
-    : Math.round(score)
-  const color = pct >= 80 ? 'bg-green-100 text-green-700'
-              : pct >= 60 ? 'bg-yellow-100 text-yellow-700'
+  const pct = typeof score === 'number' && score <= 1 ? Math.round(score * 100) : Math.round(score)
+  const color = pct >= 80 ? 'bg-emerald-100 text-emerald-700'
+              : pct >= 60 ? 'bg-amber-100 text-amber-700'
               : 'bg-red-100 text-red-700'
   return (
-    <span className={`inline-flex items-center gap-1 text-xs font-semibold px-2 py-0.5 rounded-full ${color}`}>
+    <span className={`badge ${color}`}>
       <Sparkles size={11} />AI {pct}%
     </span>
   )
 }
 
-// ── Profile field ─────────────────────────────────────────────────────────────
 function ProfileRow({ label, value }) {
   if (!value) return null
   return (
-    <div className="flex flex-col">
-      <span className="text-xs text-gray-400 uppercase tracking-wide mb-0.5">{label}</span>
-      <span className="text-sm text-gray-800 font-medium truncate">{value}</span>
-    </div>
+    <motion.div variants={fadeIn} className="flex flex-col">
+      <span className="text-xs font-semibold text-surface-400 uppercase tracking-wider mb-0.5">{label}</span>
+      <span className="text-sm text-surface-800 font-medium truncate">{value}</span>
+    </motion.div>
   )
 }
 
-// ── Export button ─────────────────────────────────────────────────────────────
 function ExportButton({ profileId, fileName }) {
   const [busy, setBusy] = useState(null)
   const slug = (fileName || 'profile').replace(/\.[^.]+$/, '')
@@ -59,32 +55,26 @@ function ExportButton({ profileId, fileName }) {
     try {
       if (type === 'json') await exportProfileJson(profileId, slug)
       else await exportProfileXlsx(profileId, slug)
-    } finally {
-      setBusy(null)
-    }
+    } finally { setBusy(null) }
   }
 
   return (
     <div className="flex items-center gap-2">
       <button onClick={() => handle('json')} disabled={!!busy || !profileId}
-        className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5
-                   border border-gray-200 rounded-lg text-gray-600
-                   hover:bg-gray-50 hover:border-gray-300 transition-colors disabled:opacity-50">
-        <FileJson size={13} />{busy === 'json' ? 'Exporting…' : 'JSON'}
+        className="btn-secondary !px-3 !py-1.5 !text-xs">
+        <FileJson size={13} />{busy === 'json' ? '…' : 'JSON'}
       </button>
       <button onClick={() => handle('excel')} disabled={!!busy || !profileId}
-        className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5
-                   border border-green-200 rounded-lg text-green-700
-                   hover:bg-green-50 hover:border-green-300 transition-colors disabled:opacity-50">
-        <Sheet size={13} />{busy === 'excel' ? 'Exporting…' : 'Excel'}
+        className="!px-3 !py-1.5 !text-xs inline-flex items-center gap-1.5 font-semibold
+                   border border-emerald-200 rounded-xl text-emerald-700 bg-emerald-50
+                   hover:bg-emerald-100 hover:border-emerald-300 transition-colors duration-200 disabled:opacity-50">
+        <Sheet size={13} />{busy === 'excel' ? '…' : 'Excel'}
       </button>
     </div>
   )
 }
 
-// ── Profile Card ──────────────────────────────────────────────────────────────
 function ProfileCard({ file }) {
-  // Fetch the profile for this specific file
   const { data: profile, isLoading } = useQuery({
     queryKey: ['profile-by-upload', file.id],
     queryFn: () => getProfileByUploadId(file.id),
@@ -94,143 +84,139 @@ function ProfileCard({ file }) {
   const name = profile?.full_name || file.original_filename || 'Unnamed Profile'
 
   return (
-    <div className="card mb-4">
-      {/* Card header */}
-      <div className="flex items-start justify-between mb-4 pb-3 border-b border-gray-100">
-        <div>
-          <h2 className="text-base font-bold text-gray-800">{name}</h2>
-          <div className="flex items-center gap-2 mt-1">
+    <motion.div variants={fadeInUp} className="card mb-4 overflow-hidden">
+      <div className="h-0.5 bg-gradient-to-r from-primary-400 via-primary-500 to-primary-600 -mx-6 -mt-6 mb-5" />
+
+      <div className="flex items-start justify-between mb-4 pb-4 border-b border-surface-100">
+        <motion.div variants={fadeIn}>
+          <h2 className="text-base font-bold text-surface-800">{name}</h2>
+          <div className="flex items-center gap-2 mt-1.5">
             {profile?.ai_confidence != null && <ConfidencePill score={profile.ai_confidence} />}
             {profile?.city && profile?.state && (
-              <span className="text-xs text-gray-400">{profile.city}, {profile.state}</span>
+              <span className="text-xs text-surface-400">{profile.city}, {profile.state}</span>
             )}
           </div>
-        </div>
+        </motion.div>
         <div className="flex items-center gap-3">
           <ExportButton profileId={profile?.id} fileName={file.original_filename} />
-          <Link
-            to="/files"
-            className="inline-flex items-center gap-1 text-xs font-semibold text-primary-600 hover:underline"
-          >
-            View full <ChevronRight size={13} />
+          <Link to="/files"
+            className="text-xs font-semibold text-primary-600 hover:text-primary-700 flex items-center gap-0.5 transition-colors">
+            View full <ChevronRight size={12} />
           </Link>
         </div>
       </div>
 
-      {/* Body */}
       {isLoading ? (
-        <div className="flex items-center gap-2 text-sm text-gray-400 py-4">
+        <div className="flex items-center gap-2 text-sm text-surface-400 py-4">
           <Loader2 size={16} className="animate-spin" /> Loading profile data…
         </div>
       ) : profile ? (
-        <>
+        <motion.div variants={stagger} initial="initial" animate="animate">
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-4">
-            <ProfileRow label="Date of Birth"   value={profile.date_of_birth} />
-            <ProfileRow label="Gender"           value={profile.gender} />
-            <ProfileRow label="Religion"         value={profile.religion} />
-            <ProfileRow label="Caste"            value={profile.caste} />
-            <ProfileRow label="Mother Tongue"    value={profile.mother_tongue} />
-            <ProfileRow label="Height"           value={profile.height} />
-            <ProfileRow label="Blood Group"      value={profile.blood_group} />
-            <ProfileRow label="Mobile"           value={profile.mobile} />
-            <ProfileRow label="Education"        value={profile.highest_education || profile.education} />
-            <ProfileRow label="Occupation"       value={profile.occupation} />
-            <ProfileRow label="Annual Income"    value={profile.annual_income} />
-            <ProfileRow label="Rashi"            value={profile.rashi} />
-            <ProfileRow label="Nakshatra"        value={profile.nakshatra} />
-            <ProfileRow label="Gotra"            value={profile.gotra} />
+            <ProfileRow label="DOB"        value={profile.date_of_birth} />
+            <ProfileRow label="Gender"     value={profile.gender} />
+            <ProfileRow label="Religion"   value={profile.religion} />
+            <ProfileRow label="Caste"      value={profile.caste} />
+            <ProfileRow label="Tongue"     value={profile.mother_tongue} />
+            <ProfileRow label="Height"     value={profile.height} />
+            <ProfileRow label="Blood"      value={profile.blood_group} />
+            <ProfileRow label="Mobile"     value={profile.mobile} />
+            <ProfileRow label="Education"  value={profile.highest_education || profile.education} />
+            <ProfileRow label="Occupation" value={profile.occupation} />
+            <ProfileRow label="Income"     value={profile.annual_income} />
+            <ProfileRow label="Rashi"      value={profile.rashi} />
+            <ProfileRow label="Nakshatra"  value={profile.nakshatra} />
+            <ProfileRow label="Gotra"      value={profile.gotra} />
           </div>
           {(profile.father_name || profile.mother_name || profile.siblings) && (
-            <div className="mt-4 pt-3 border-t border-gray-100 grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-4">
-              <ProfileRow label="Father's Name"  value={profile.father_name} />
-              <ProfileRow label="Mother's Name"  value={profile.mother_name} />
-              <ProfileRow label="Siblings"       value={profile.siblings} />
-            </div>
+            <motion.div variants={fadeInUp} className="mt-4 pt-4 border-t border-surface-100 grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-4">
+              <ProfileRow label="Father" value={profile.father_name} />
+              <ProfileRow label="Mother" value={profile.mother_name} />
+              <ProfileRow label="Siblings" value={profile.siblings} />
+            </motion.div>
           )}
-        </>
+        </motion.div>
       ) : (
-        <p className="text-sm text-gray-400 italic">No extracted data available for this file.</p>
+        <p className="text-sm text-surface-400 italic">No extracted data available.</p>
       )}
-    </div>
+    </motion.div>
   )
 }
 
-// ── Main Dashboard ────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const { data: statsData, isLoading: statsLoading } = useQuery({
-    queryKey: ['dashboard'],
-    queryFn: getDashboardStats,
+    queryKey: ['dashboard'], queryFn: getDashboardStats,
   })
-
   const { data: filesData, isLoading: filesLoading } = useQuery({
     queryKey: ['files', 'dashboard'],
     queryFn: () => getFiles({ page: 1, pageSize: 20 }),
   })
 
-  if (statsLoading) return <p className="text-gray-400">Loading…</p>
+  if (statsLoading) return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      {[1,2,3,4].map(i => <motion.div key={i} initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.08 }}
+        className="shimmer h-24 rounded-2xl" />)}
+    </div>
+  )
 
   const stats = [
-    { label: 'Total Uploads',    value: statsData?.stats?.total_uploads ?? 0,    icon: Upload,      color: 'text-blue-600',   bg: 'bg-blue-50'   },
-    { label: 'Processed',        value: statsData?.stats?.processed_uploads ?? 0, icon: CheckCircle, color: 'text-green-600',  bg: 'bg-green-50'  },
-    { label: 'Profile Complete', value: statsData?.stats?.profile_complete ? 'Yes' : 'No', icon: User, color: 'text-purple-600', bg: 'bg-purple-50' },
-    {
-      label: 'AI Confidence',
-      value: statsData?.stats?.ai_confidence != null
-        ? `${Math.round(statsData.stats.ai_confidence * 100)}%`
-        : '—',
-      icon: TrendingUp, color: 'text-orange-600', bg: 'bg-orange-50',
-    },
+    { label: 'Total Uploads',    value: statsData?.stats?.total_uploads ?? 0,    icon: Upload,      color: 'text-primary-600',  bg: 'bg-primary-50'   },
+    { label: 'Processed',        value: statsData?.stats?.processed_uploads ?? 0, icon: CheckCircle, color: 'text-emerald-600', bg: 'bg-emerald-50'  },
+    { label: 'Profile Complete', value: statsData?.stats?.profile_complete ? 'Yes' : 'No', icon: User, color: 'text-amber-600', bg: 'bg-amber-50' },
+    { label: 'AI Confidence',    value: statsData?.stats?.ai_confidence != null ? `${Math.round(statsData.stats.ai_confidence * 100)}%` : '—',
+      icon: TrendingUp, color: 'text-violet-600', bg: 'bg-violet-50' },
   ]
 
   const doneFiles = (filesData?.items ?? []).filter(f => f.status === 'done')
 
   return (
-    <div>
-      {/* Header */}
-      <h1 className="text-2xl font-bold text-gray-800 mb-1">
-        Welcome back, {statsData?.user?.name?.split(' ')[0]} 👋
-      </h1>
-      <p className="text-gray-500 mb-8">Here's your myvivahai overview</p>
+    <motion.div variants={stagger} initial="initial" animate="animate">
+      <motion.div variants={fadeIn} className="mb-8">
+        <h1 className="text-2xl font-bold text-surface-800 mb-1">
+          Welcome back, {statsData?.user?.name?.split(' ')[0]}
+        </h1>
+        <p className="text-surface-400">Here's your myvivahai overview</p>
+      </motion.div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        {stats.map((s) => <StatCard key={s.label} {...s} />)}
-      </div>
+      <motion.div variants={fadeInUp} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        {stats.map((s, i) => <StatCard key={s.label} {...s} />)}
+      </motion.div>
 
-      {/* Recent Profiles heading */}
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-lg font-semibold text-gray-800 flex items-center gap-2">
-          <FileText size={18} className="text-primary-600" />
+      <motion.div variants={fadeInUp} className="flex items-center justify-between mb-4">
+        <h2 className="section-heading">
+          <FileText size={18} className="text-primary-500" />
           Recent Profiles
           {doneFiles.length > 0 && (
-            <span className="text-sm font-normal text-gray-400">({doneFiles.length})</span>
+            <span className="text-sm font-normal text-surface-400">({doneFiles.length})</span>
           )}
         </h2>
-        <Link to="/files" className="text-xs font-semibold text-primary-600 hover:underline flex items-center gap-1">
+        <Link to="/files" className="text-xs font-semibold text-primary-600 hover:text-primary-700 flex items-center gap-1 transition-colors">
           View all files <ChevronRight size={13} />
         </Link>
-      </div>
+      </motion.div>
 
-      {/* Profile cards */}
       {filesLoading ? (
         <div className="space-y-4">
-          {[1, 2].map(i => <div key={i} className="card animate-pulse h-48" />)}
+          {[1, 2].map(i => <motion.div key={i} initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+            transition={{ delay: i * 0.1 }} className="shimmer h-48 rounded-2xl" />)}
         </div>
       ) : doneFiles.length > 0 ? (
-        <div>
-          {doneFiles.map((file) => (
-            <ProfileCard key={file.id} file={file} />
-          ))}
-        </div>
+        <motion.div variants={stagger} initial="initial" animate="animate">
+          {doneFiles.map((file) => <ProfileCard key={file.id} file={file} />)}
+        </motion.div>
       ) : (
-        <div className="bg-primary-50 border border-primary-200 rounded-xl p-6 flex items-center justify-between">
+        <motion.div
+          initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+          className="card-glass flex items-center justify-between p-6"
+        >
           <div>
-            <h3 className="font-semibold text-primary-800">Get started — upload your biodata</h3>
-            <p className="text-primary-600 text-sm mt-1">AI extracts your complete profile in seconds</p>
+            <h3 className="font-semibold text-surface-800">Get started — upload your biodata</h3>
+            <p className="text-surface-400 text-sm mt-1">AI extracts your complete profile in seconds</p>
           </div>
-          <Link to="/upload" className="btn-primary whitespace-nowrap">Upload Now</Link>
-        </div>
+          <Link to="/upload" className="btn-primary">Upload Now</Link>
+        </motion.div>
       )}
-    </div>
+    </motion.div>
   )
 }
