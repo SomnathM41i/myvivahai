@@ -1,14 +1,11 @@
 """
-profile_service.py  — UPDATED VERSION
-======================================
-Drop this file at:  app/services/profile_service.py
+profile_service.py
+==================
+Handles both extraction modes:
+  - "ocr"    : OCR/text extraction → Groq text LLM  (original pipeline)
+  - "vision" : image/PDF sent directly to Groq vision LLM (no OCR step)
 
-Changes from your original:
-  1. Replaces 4 parser calls + 16s of sleep with ONE single-pass call
-  2. Captures ocr_confidence from the improved OCR pipeline (Problem 1)
-  3. Runs the new confidence scoring system (Problem 3)
-  4. Stores confidence_score, confidence_label, needs_review in the DB
-  5. Removes _PARSER_DELAY_SECONDS — no longer needed
+The mode is chosen by the user at upload time and stored in uploads.extraction_mode.
 """
 
 import json
@@ -21,17 +18,14 @@ from app.core.constants import IMAGE_EXTENSIONS, UploadStatus
 from app.repositories.upload_repository import UploadRepository
 from app.repositories.profile_repository import ProfileRepository
 
-# ── New single-pass parser (replaces all 4 separate parsers) ──────────────
-from app.ai.parsers.single_pass_parser import parse_biodata_single_pass
+from app.ai.parsers.single_pass_parser import (
+    parse_biodata_single_pass,
+    parse_biodata_vision,
+)
 from app.ai.llm_client import get_groq_client
-
-# ── New confidence scoring (Problem 3) ────────────────────────────────────
 from app.ai.validators.confidence_scoring import compute_confidence
-
-# ── Schema mapper — unchanged ──────────────────────────────────────────────
 from app.ai.transformers.schema_mapper import map_to_profile_fields
 
-# Char limit sent to Groq.  8000 chars covers multi-profile newspaper pages.
 _TEXT_LIMIT = 8000
 
 
@@ -46,35 +40,56 @@ async def process_upload(upload_id: int, db: AsyncSession) -> None:
 
     await upload_repo.update_status(upload, UploadStatus.PROCESSING)
 
+    # Read the chosen mode (default "ocr" for old rows without the column)
+    mode = getattr(upload, "extraction_mode", "ocr") or "ocr"
+    logger.info(f"Upload {upload_id}: extraction_mode={mode!r}")
+
     try:
-        # ── 1. Extract text (OCR / PDF / DOCX / TXT) ──────────────────────
-        text, ocr_confidence = _extract_text(upload.file_path, upload.file_type)
-        await upload_repo.update_status(upload, UploadStatus.PROCESSING, extracted_text=text)
-
-        trimmed = text[:_TEXT_LIMIT]
-        logger.info(
-            f"Upload {upload_id}: {len(trimmed)} chars extracted "
-            f"(original {len(text)}) | ocr_conf={ocr_confidence:.2f}"
-        )
-
-        # ── 2. Single Groq call (replaces 4 calls + 16 s of sleep) ─────────
         client = get_groq_client()
-        parsed = await parse_biodata_single_pass(trimmed, client)
-        flat   = parsed.to_flat_dict()
 
-        # ── 2b. Handle multi-profile pages ────────────────────────────────
-        # The LLM may return a "profiles" array for newspaper pages with multiple cards.
-        # If so, save each profile as a separate DB row and use the first for confidence.
-        raw_json_root = flat  # used below for confidence scoring (first profile)
+        if mode == "vision":
+            # ── VISION PATH: send file directly to vision LLM ────────────
+            parsed = await parse_biodata_vision(
+                file_path=upload.file_path,
+                file_type=upload.file_type,
+                groq_client=client,
+            )
+            flat          = parsed.to_flat_dict()
+            ocr_confidence = None   # No OCR step — skip tesseract conf scoring
+
+            # Store a note in extracted_text so retries / debugging are clear
+            await upload_repo.update_status(
+                upload, UploadStatus.PROCESSING,
+                extracted_text="[vision mode — image sent directly to LLM, no OCR text]",
+            )
+
+        else:
+            # ── OCR PATH: extract text first, then send to text LLM ──────
+            text, ocr_confidence = _extract_text(upload.file_path, upload.file_type)
+            await upload_repo.update_status(
+                upload, UploadStatus.PROCESSING, extracted_text=text,
+            )
+            trimmed = text[:_TEXT_LIMIT]
+            logger.info(
+                f"Upload {upload_id}: {len(trimmed)} chars extracted "
+                f"(original {len(text)}) | ocr_conf={ocr_confidence:.2f}"
+            )
+            parsed = await parse_biodata_single_pass(trimmed, client)
+            flat   = parsed.to_flat_dict()
+
+        # ── Handle multi-profile pages (both modes) ───────────────────────
         extra_profiles: list[dict] = flat.pop("profiles", []) or []
-        # extra_profiles is a list of flat dicts, each representing a separate card
 
-        # ── 3. Confidence scoring ──────────────────────────────────────────
+        # Extra profiles may also come via _extra_profiles attribute (vision mode)
+        _extra = getattr(parsed, "_extra_profiles", [])
+        if _extra:
+            extra_profiles += [p.to_flat_dict() for p in _extra]
+
+        # ── Confidence scoring ────────────────────────────────────────────
         confidence = compute_confidence(
-            extracted_text=text,
+            extracted_text=flat.get("raw_json", "") or "",
             flat_parsed_data=flat,
-            tesseract_mean_conf=ocr_confidence if ocr_confidence < 1.0 else None,
-            # Pass None for digital PDFs / DOCX / TXT (perfect extraction)
+            tesseract_mean_conf=ocr_confidence if ocr_confidence and ocr_confidence < 1.0 else None,
         )
         flat["confidence_score"] = confidence.final_score
         flat["confidence_label"] = confidence.label
@@ -83,30 +98,25 @@ async def process_upload(upload_id: int, db: AsyncSession) -> None:
 
         logger.info(
             f"Upload {upload_id}: confidence={confidence.final_score:.2f} "
-            f"({confidence.label}) | needs_review={confidence.needs_review}"
-        )
-        logger.debug(
-            f"Upload {upload_id} OCR text preview (first 500 chars):\n"
-            f"{text[:500]!r}"
+            f"({confidence.label}) | needs_review={confidence.needs_review} | "
+            f"mode={mode}"
         )
 
-        # ── 4. Map to DB fields and save ────────────────────────────────────
+        # ── Save primary profile ──────────────────────────────────────────
         profile_fields = map_to_profile_fields(flat)
-        # upload_id is the key: same upload re-processed → update; new upload → new row
         await profile_repo.upsert(
             user_id=upload.user_id,
-            upload_id=upload_id,      # <-- ensures previous profiles are NOT overwritten
+            upload_id=upload_id,
             raw_json=json.dumps(flat),
             **profile_fields,
         )
 
-        # Save any additional profiles found on the same page (multi-profile pages)
+        # ── Save extra profiles from multi-profile pages ──────────────────
         profiles_saved = 1
         for extra_flat in extra_profiles:
             if not isinstance(extra_flat, dict):
                 continue
             extra_fields = map_to_profile_fields(extra_flat)
-            # Use upload_id=None so these always create new rows (no upsert collision)
             await profile_repo.create(
                 user_id=upload.user_id,
                 upload_id=upload_id,
@@ -116,23 +126,23 @@ async def process_upload(upload_id: int, db: AsyncSession) -> None:
             profiles_saved += 1
             logger.info(f"Upload {upload_id}: saved extra profile ({profiles_saved})")
 
-        # ── 5. Mark upload done ─────────────────────────────────────────────
+        # ── Mark done ─────────────────────────────────────────────────────
         await upload_repo.update_status(
             upload,
             UploadStatus.DONE,
             processed_output=json.dumps(flat),
             profiles_count=profiles_saved,
-            model_used=upload.file_type,
+            model_used=f"{mode}:{upload.file_type}",
             completed_at=datetime.now(timezone.utc),
         )
-        await db.commit()  # ← persist profile + upload status to disk
-        logger.info(f"Upload {upload_id} processed OK")
+        await db.commit()
+        logger.info(f"Upload {upload_id} processed OK ({mode} mode)")
 
     except Exception as e:
         logger.exception(f"Upload {upload_id} failed: {e}")
-        await db.rollback()  # ← discard partial writes from the failed attempt
+        await db.rollback()
         await upload_repo.update_status(upload, UploadStatus.FAILED, error_message=str(e))
-        await db.commit()    # ← persist the FAILED status so the UI can show the error
+        await db.commit()
 
 
 def _extract_text(file_path: str, file_type: str) -> tuple[str, float]:

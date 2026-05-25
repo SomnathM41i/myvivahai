@@ -2,11 +2,12 @@
  * UploadBiodata.jsx  —  unified upload + live stream + history management
  *
  * What changed vs original:
+ *  - Extraction mode toggle: "OCR" vs "Vision (Direct AI)"
+ *  - Vision mode sends the image/PDF directly to the vision LLM — no OCR step
+ *  - Mode is stored per-upload in the DB and shown in history
  *  - Uploads now go to /api/biodata/upload (Celery + SSE path), not /api/uploads/
  *  - Live extraction pipeline is shown inline after upload
  *  - Upload history has Delete and Retry buttons per row
- *  - Retry resets status via POST /api/uploads/{id}/retry
- *  - Delete removes via DELETE /api/uploads/{id}
  */
 
 import { useCallback, useState, useRef } from 'react'
@@ -14,44 +15,77 @@ import { useDropzone } from 'react-dropzone'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   Upload, FileText, CheckCircle, Clock, AlertCircle,
-  Trash2, RefreshCw, ChevronDown, ChevronUp, Zap,
+  Trash2, RefreshCw, Eye, ScanLine, Info,
 } from 'lucide-react'
 import api from '../services/apiClient'
 import { useExtractionStream } from '../hooks/useExtractionStream'
 
 // ── API helpers ──────────────────────────────────────────────────────────
 
-const uploadFile    = (file) => {
+const uploadFile = (file, mode) => {
   const fd = new FormData()
   fd.append('file', file)
-  return api.post('/biodata/upload', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+  fd.append('extraction_mode', mode)          // "ocr" or "vision"
+  return api.post('/uploads/', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
     .then(r => r.data)
 }
-const getUploads    = () => api.get('/uploads/').then(r => r.data)
-const deleteUpload  = (id) => api.delete(`/uploads/${id}`)
-const retryUpload   = (id) => api.post(`/uploads/${id}/retry`).then(r => r.data)
+const getUploads   = () => api.get('/uploads/').then(r => r.data)
+const deleteUpload = (id) => api.delete(`/uploads/${id}`)
+const retryUpload  = (id) => api.post(`/uploads/${id}/retry`).then(r => r.data)
 
 // ── Status helpers ───────────────────────────────────────────────────────
 
 const STATUS = {
   done:       { Icon: CheckCircle, color: 'text-emerald-600', bg: 'bg-emerald-50', label: 'Done' },
-  processing: { Icon: Zap,         color: 'text-blue-600',    bg: 'bg-blue-50',    label: 'Processing' },
+  processing: { Icon: ScanLine,    color: 'text-blue-600',    bg: 'bg-blue-50',    label: 'Processing' },
   pending:    { Icon: Clock,       color: 'text-amber-500',   bg: 'bg-amber-50',   label: 'Pending' },
   queued:     { Icon: Clock,       color: 'text-amber-500',   bg: 'bg-amber-50',   label: 'Queued' },
   failed:     { Icon: AlertCircle, color: 'text-red-600',     bg: 'bg-red-50',     label: 'Failed' },
 }
 const getStatus = (s) => STATUS[s] || STATUS.pending
 
+// ── Extraction mode definitions ──────────────────────────────────────────
+
+const MODES = {
+  ocr: {
+    id:      'ocr',
+    label:   'OCR + AI',
+    icon:    ScanLine,
+    color:   'text-blue-600',
+    border:  'border-blue-400',
+    bg:      'bg-blue-50',
+    badge:   'bg-blue-100 text-blue-700',
+    title:   'OCR + AI Text',
+    desc:    'Extracts text via OCR first, then sends to AI. Works with DOCX, TXT, and clean printed biodata.',
+    works:   ['PDF', 'DOCX', 'TXT', 'Clear printed images'],
+    notBest: ['Marathi/Hindi handwriting', 'WhatsApp photo quality'],
+  },
+  vision: {
+    id:      'vision',
+    label:   'Direct Vision AI',
+    icon:    Eye,
+    color:   'text-purple-600',
+    border:  'border-purple-400',
+    bg:      'bg-purple-50',
+    badge:   'bg-purple-100 text-purple-700',
+    title:   'Vision AI (Recommended for images)',
+    desc:    'Sends image/PDF directly to AI vision model — no OCR needed. Best for Marathi, Hindi, and phone photos.',
+    works:   ['Marathi / Hindi biodata', 'Phone photos', 'WhatsApp images', 'Newspaper biodata pages'],
+    notBest: ['DOCX / TXT files (falls back to OCR automatically)'],
+  },
+}
+
 // ── Pipeline stages ──────────────────────────────────────────────────────
 
 const PIPELINE = [
-  { key: 'ocr',       label: 'Parse'     },
-  { key: 'llm',       label: 'LLM'       },
-  { key: 'structure', label: 'Structure' },
-  { key: 'save',      label: 'Save'      },
-  { key: 'done',      label: 'Complete'  },
+  { key: 'upload',    label: 'Upload'   },
+  { key: 'ocr',      label: 'Parse'    },
+  { key: 'llm',      label: 'AI'       },
+  { key: 'structure',label: 'Structure'},
+  { key: 'save',     label: 'Save'     },
+  { key: 'done',     label: 'Complete' },
 ]
-const STAGE_IDX = { connected:0, ocr:1, llm:2, structure:3, save:4, done:5 }
+const STAGE_IDX = { connected:0, upload:1, ocr:2, llm:3, structure:4, save:5, done:6 }
 
 const LOG_COLOR = {
   ok:    'text-emerald-600',
@@ -64,8 +98,10 @@ const LOG_COLOR = {
 
 export default function UploadBiodata() {
   const qc = useQueryClient()
-  const [taskId, setTaskId] = useState(null)
-  const [activeId, setActiveId] = useState(null)   // upload_id being streamed
+  const [taskId,    setTaskId]    = useState(null)
+  const [activeId,  setActiveId]  = useState(null)
+  const [mode,      setMode]      = useState('vision')   // default: vision (best for Indian biodata)
+  const [showInfo,  setShowInfo]  = useState(false)
 
   // Upload history
   const { data: uploads = [], isLoading } = useQuery({
@@ -80,10 +116,10 @@ export default function UploadBiodata() {
 
   // Upload mutation
   const uploadMutation = useMutation({
-    mutationFn: uploadFile,
+    mutationFn: ({ file, mode }) => uploadFile(file, mode),
     onSuccess: (data) => {
       setTaskId(data.task_id)
-      setActiveId(data.upload_id)
+      setActiveId(data.id)
       qc.invalidateQueries({ queryKey: ['uploads'] })
     },
   })
@@ -97,11 +133,7 @@ export default function UploadBiodata() {
   // Retry mutation
   const retryMutation = useMutation({
     mutationFn: retryUpload,
-    onSuccess: (data) => {
-      qc.invalidateQueries({ queryKey: ['uploads'] })
-      // Can't SSE-stream a retry (no new task_id from Celery here),
-      // the status poll above will pick it up.
-    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['uploads'] }),
   })
 
   // SSE stream for current upload
@@ -113,9 +145,9 @@ export default function UploadBiodata() {
       stream.reset()
       setTaskId(null)
       setActiveId(null)
-      uploadMutation.mutate(files[0])
+      uploadMutation.mutate({ file: files[0], mode })
     }
-  }, [uploadMutation, stream])
+  }, [uploadMutation, stream, mode])
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -130,36 +162,122 @@ export default function UploadBiodata() {
   })
 
   const isStreaming = uploadMutation.isPending || stream.status === 'streaming'
+  const currentMode = MODES[mode]
 
   return (
     <div>
       <h1 className="text-2xl font-bold text-gray-800 mb-1">Upload Biodata</h1>
       <p className="text-gray-500 mb-6">PDF, DOCX, image or TXT — AI extracts your profile automatically</p>
 
+      {/* ── Extraction Mode Selector ── */}
+      <div className="mb-6">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-sm font-semibold text-gray-700">Extraction Method</span>
+          <button
+            onClick={() => setShowInfo(v => !v)}
+            className="text-gray-400 hover:text-gray-600 transition-colors"
+            title="What's the difference?"
+          >
+            <Info size={15} />
+          </button>
+        </div>
+
+        {/* Mode cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {Object.values(MODES).map((m) => {
+            const Icon = m.icon
+            const selected = mode === m.id
+            return (
+              <button
+                key={m.id}
+                onClick={() => setMode(m.id)}
+                disabled={isStreaming}
+                className={`text-left rounded-xl border-2 p-4 transition-all
+                  disabled:opacity-50 disabled:cursor-not-allowed
+                  ${selected
+                    ? `${m.border} ${m.bg} shadow-sm`
+                    : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'
+                  }`}
+              >
+                <div className="flex items-center gap-2 mb-1.5">
+                  <Icon size={16} className={selected ? m.color : 'text-gray-400'} />
+                  <span className={`text-sm font-semibold ${selected ? m.color : 'text-gray-600'}`}>
+                    {m.title}
+                  </span>
+                  {m.id === 'vision' && (
+                    <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-purple-100 text-purple-700">
+                      RECOMMENDED
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-gray-500 leading-relaxed">{m.desc}</p>
+              </button>
+            )
+          })}
+        </div>
+
+        {/* Expandable info panel */}
+        {showInfo && (
+          <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {Object.values(MODES).map((m) => (
+              <div key={m.id} className="rounded-lg bg-gray-50 border border-gray-200 p-3">
+                <p className="text-xs font-semibold text-gray-600 mb-2">{m.label} — best for:</p>
+                <ul className="space-y-1">
+                  {m.works.map(w => (
+                    <li key={w} className="text-xs text-emerald-700 flex gap-1.5">
+                      <span>✓</span>{w}
+                    </li>
+                  ))}
+                </ul>
+                {m.notBest.length > 0 && (
+                  <>
+                    <p className="text-xs font-semibold text-gray-500 mt-2 mb-1">Less ideal for:</p>
+                    <ul className="space-y-1">
+                      {m.notBest.map(w => (
+                        <li key={w} className="text-xs text-gray-400 flex gap-1.5">
+                          <span>–</span>{w}
+                        </li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* ── Drop zone ── */}
       <div
         {...getRootProps()}
         className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer
           transition-all mb-6
-          ${isDragActive          ? 'border-primary-500 bg-primary-50'
+          ${isDragActive          ? `${currentMode.border} ${currentMode.bg}`
           : isStreaming           ? 'border-primary-300 bg-primary-50/40 cursor-not-allowed opacity-60'
-          : 'border-gray-300 hover:border-primary-400 hover:bg-gray-50'}`}
+          : `border-gray-300 hover:${currentMode.border} hover:bg-gray-50`}`}
       >
         <input {...getInputProps()} />
         <Upload className="mx-auto text-gray-400 mb-3" size={40} />
         {isDragActive
-          ? <p className="text-primary-600 font-medium">Drop it here!</p>
+          ? <p className={`${currentMode.color} font-medium`}>Drop it here!</p>
           : isStreaming
             ? <p className="text-primary-600 font-medium animate-pulse">Processing…</p>
-            : <p className="text-gray-600">Drag & drop or <span className="text-primary-600 font-medium">browse</span></p>
+            : (
+              <>
+                <p className="text-gray-600">
+                  Drag & drop or <span className={`${currentMode.color} font-medium`}>browse</span>
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  Using: <span className={`font-medium ${currentMode.color}`}>{currentMode.title}</span>
+                </p>
+              </>
+            )
         }
         <p className="text-xs text-gray-400 mt-2">PDF, DOCX, JPG, PNG, TXT — max 20 MB</p>
       </div>
 
       {/* ── Live stream panel ── */}
-      {taskId && (
-        <StreamPanel stream={stream} />
-      )}
+      {taskId && <StreamPanel stream={stream} mode={mode} />}
 
       {/* ── Upload error ── */}
       {uploadMutation.error && (
@@ -201,19 +319,26 @@ export default function UploadBiodata() {
 
 // ── StreamPanel ──────────────────────────────────────────────────────────
 
-function StreamPanel({ stream }) {
+function StreamPanel({ stream, mode }) {
   const logRef = useRef()
   if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
 
   const isDone  = stream.status === 'done'
   const isError = stream.status === 'error'
+  const modeInfo = MODES[mode] || MODES.ocr
 
   return (
     <div className="card mb-6 border border-primary-100 bg-primary-50/30">
+      {/* Mode indicator */}
+      <div className="flex items-center gap-2 mb-3">
+        {(() => { const Icon = modeInfo.icon; return <Icon size={13} className={modeInfo.color} /> })()}
+        <span className={`text-xs font-medium ${modeInfo.color}`}>{modeInfo.title}</span>
+      </div>
+
       {/* Pipeline stepper */}
       <div className="flex items-center mb-4">
         {PIPELINE.map((step, i) => {
-          const idx    = STAGE_IDX[step.key]
+          const idx    = STAGE_IDX[step.key] ?? i
           const done   = stream.stageIndex > idx
           const active = stream.stageIndex === idx
           return (
@@ -230,7 +355,7 @@ function StreamPanel({ stream }) {
                   ${done   ? 'text-emerald-600'
                   : active ? 'text-primary-500 font-medium'
                   :          'text-gray-300'}`}>
-                  {step.label}
+                  {mode === 'vision' && step.key === 'ocr' ? 'Vision' : step.label}
                 </span>
               </div>
               {i < PIPELINE.length - 1 && (
@@ -277,12 +402,12 @@ function StreamPanel({ stream }) {
           <p className="text-xs font-semibold text-emerald-700 mb-2">Extracted Profile</p>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
             {[
-              ['Name',      stream.profile.name],
-              ['Age',       stream.profile.age],
-              ['Education', stream.profile.education],
-              ['Occupation',stream.profile.occupation],
-              ['City',      stream.profile.city],
-              ['Religion',  stream.profile.religion],
+              ['Name',       stream.profile.name],
+              ['Age',        stream.profile.age],
+              ['Education',  stream.profile.education],
+              ['Occupation', stream.profile.occupation],
+              ['City',       stream.profile.city],
+              ['Religion',   stream.profile.religion],
             ].filter(([,v]) => v).map(([k,v]) => (
               <div key={k} className="bg-white rounded-md px-2 py-1.5">
                 <p className="text-[10px] text-gray-400">{k}</p>
@@ -300,8 +425,10 @@ function StreamPanel({ stream }) {
 
 function UploadRow({ upload, isActive, onDelete, onRetry, isDeleting, isRetrying }) {
   const { Icon, color, bg, label } = getStatus(upload.status)
-  const canRetry = ['failed', 'pending'].includes(upload.status)
+  const canRetry  = ['failed', 'pending'].includes(upload.status)
   const canDelete = upload.status !== 'processing'
+  const modeInfo  = MODES[upload.extraction_mode] || MODES.ocr
+  const ModeIcon  = modeInfo.icon
 
   return (
     <div className={`flex items-center justify-between py-3 gap-3
@@ -311,15 +438,21 @@ function UploadRow({ upload, isActive, onDelete, onRetry, isDeleting, isRetrying
         <FileText size={16} className="text-gray-400 shrink-0" />
         <div className="min-w-0">
           <p className="text-sm font-medium text-gray-700 truncate">{upload.original_filename}</p>
-          <p className="text-xs text-gray-400">
-            {upload.file_type} · {new Date(upload.created_at).toLocaleDateString()}
-          </p>
+          <div className="flex items-center gap-2 mt-0.5">
+            <p className="text-xs text-gray-400">
+              {upload.file_type} · {new Date(upload.created_at).toLocaleDateString()}
+            </p>
+            {/* Mode badge */}
+            <span className={`inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded-full ${modeInfo.badge}`}>
+              <ModeIcon size={9} />
+              {modeInfo.label}
+            </span>
+          </div>
         </div>
       </div>
 
       {/* Right side: status + actions */}
       <div className="flex items-center gap-2 shrink-0">
-        {/* Status badge */}
         <span className={`flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-full ${color} ${bg}`}>
           <Icon size={11} />
           {label}
@@ -328,7 +461,6 @@ function UploadRow({ upload, isActive, onDelete, onRetry, isDeleting, isRetrying
           )}
         </span>
 
-        {/* Retry button */}
         {canRetry && (
           <button
             onClick={onRetry}
@@ -341,7 +473,6 @@ function UploadRow({ upload, isActive, onDelete, onRetry, isDeleting, isRetrying
           </button>
         )}
 
-        {/* Delete button */}
         {canDelete && (
           <button
             onClick={onDelete}

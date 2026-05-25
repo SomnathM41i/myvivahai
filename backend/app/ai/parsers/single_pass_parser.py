@@ -317,7 +317,8 @@ async def parse_biodata_single_pass(
     model: Optional[str] = None,
 ) -> ParsedBiodata:
     """
-    Single entry point. Replaces ALL 4 parser calls in profile_service.py.
+    Single entry point for TEXT-based extraction.
+    Replaces ALL 4 parser calls in profile_service.py.
 
     Args:
         text:         Extracted text from OCR / PDF / DOCX
@@ -352,6 +353,184 @@ async def parse_biodata_single_pass(
 
     except Exception as e:
         logger.error(f"Single-pass parse failed after retries: {e}")
+        return ParsedBiodata()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 5.  VISION EXTRACTION  — send image/PDF page directly, skip OCR entirely
+# ─────────────────────────────────────────────────────────────────────────────
+
+import base64
+import mimetypes
+
+# Vision-capable Groq models (as of 2025)
+_VISION_MODELS = [
+    "meta-llama/llama-4-scout-17b-16e-instruct",
+    "meta-llama/llama-4-maverick-17b-128e-instruct",
+]
+
+VISION_SYSTEM_PROMPT = """You are an expert Indian matrimonial biodata parser.
+You can read English, Hindi, and Marathi text directly from images.
+You return ONLY valid JSON — no explanation, no markdown, no code fences.
+Set any field you cannot find to null. Never invent or guess values.
+
+CRITICAL RULES:
+1. education.highest_education = CANDIDATE'S OWN degree only.
+   Family members (brother, sister, mama) are listed with their degrees in brackets — 
+   put those in family fields, NOT in education.
+2. occupation = CANDIDATE'S current job only.
+3. mobile = संपर्क / Contact numbers for the CANDIDATE.
+4. For Marathi labels: नाव=name, शिक्षण=education, व्यवसाय=occupation,
+   उत्पन्न=income, राशी=rashi, संपर्क=mobile, वडील=father, आई=mother,
+   भाऊ=brothers, बहीण=sisters, जन्म तारीख=DOB, उंची=height, रक्त गट=blood_group."""
+
+
+@retry(
+    retry=retry_if_exception_type(Exception),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=15),
+    reraise=True,
+)
+async def _call_groq_vision(client, model: str, image_b64: str, mime: str) -> str:
+    """Send a base64-encoded image to the Groq vision model."""
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": VISION_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{mime};base64,{image_b64}",
+                        },
+                    },
+                    {
+                        "type": "text",
+                        "text": SINGLE_PASS_PROMPT.format(text="[See image above — read ALL text directly from the image]"),
+                    },
+                ],
+            },
+        ],
+        temperature=0.0,
+        max_tokens=2048,
+        response_format={"type": "json_object"},
+    )
+    return response.choices[0].message.content
+
+
+def _pdf_page_to_base64(file_path: str) -> list[tuple[str, str]]:
+    """
+    Convert each page of a PDF to a base64 JPEG.
+    Returns list of (base64_string, mime_type) tuples — one per page.
+    Requires: pip install pdf2image
+    """
+    try:
+        from pdf2image import convert_from_path
+        images = convert_from_path(file_path, dpi=200, fmt="jpeg")
+        result = []
+        for img in images:
+            import io
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=90)
+            b64 = base64.b64encode(buf.getvalue()).decode()
+            result.append((b64, "image/jpeg"))
+        return result
+    except ImportError:
+        raise RuntimeError(
+            "pdf2image is required for vision mode PDF extraction. "
+            "Run: pip install pdf2image"
+        )
+
+
+async def parse_biodata_vision(
+    file_path: str,
+    file_type: str,
+    groq_client,
+    model: Optional[str] = None,
+) -> ParsedBiodata:
+    """
+    Vision-mode extraction: sends image/PDF directly to the LLM — no OCR step.
+    Works best for:
+      - Marathi/Hindi biodata images (avoids Tesseract language issues)
+      - WhatsApp-compressed phone photos
+      - Multi-column newspaper biodata pages
+      - Any image where OCR gives poor results
+
+    Args:
+        file_path:   Absolute path to the uploaded file
+        file_type:   "image" or "pdf"
+        groq_client: AsyncOpenAI-compatible Groq client
+        model:       Vision model name (defaults to llama-4-scout)
+
+    Returns:
+        ParsedBiodata — always returns, never raises.
+    """
+    from app.config import settings
+
+    vision_model = model or _VISION_MODELS[0]
+    logger.info(f"Vision mode: {file_path} using {vision_model}")
+
+    try:
+        # ── Build list of (b64, mime) for each page/image ────────────────
+        if file_type == "pdf":
+            pages = _pdf_page_to_base64(file_path)
+        else:
+            # Direct image — read and base64-encode
+            mime = mimetypes.guess_type(file_path)[0] or "image/jpeg"
+            with open(file_path, "rb") as f:
+                raw_bytes = f.read()
+            pages = [(base64.b64encode(raw_bytes).decode(), mime)]
+
+        # ── Call vision LLM once per page, merge results ─────────────────
+        # For most biodata files this is 1 page.
+        # For multi-page PDFs we take the first page with a confident result.
+        best: Optional[ParsedBiodata] = None
+
+        for page_num, (b64, mime) in enumerate(pages):
+            logger.info(f"Vision: processing page {page_num + 1}/{len(pages)}")
+            try:
+                raw   = await _call_groq_vision(groq_client, vision_model, b64, mime)
+                clean = _clean_response(raw)
+                data  = json.loads(clean)
+
+                # Handle multi-profile response (newspaper page)
+                profiles_raw: list[dict] = data.pop("profiles", []) or []
+
+                result = ParsedBiodata.model_validate(data)
+                result._extra_profiles = [
+                    ParsedBiodata.model_validate(p) for p in profiles_raw
+                    if isinstance(p, dict)
+                ]
+
+                logger.info(
+                    f"Vision page {page_num+1} OK | "
+                    f"name={result.personal.full_name!r} | "
+                    f"conf={result.ai_confidence:.2f} | "
+                    f"extra_profiles={len(result._extra_profiles)}"
+                )
+
+                # Keep the most confident page result
+                if best is None or result.ai_confidence > best.ai_confidence:
+                    best = result
+
+                # Stop early if we got a confident result (saves API quota)
+                if result.ai_confidence >= 0.7:
+                    break
+
+            except (json.JSONDecodeError, Exception) as e:
+                logger.warning(f"Vision page {page_num+1} failed: {e}")
+                continue
+
+        if best is not None:
+            return best
+
+        logger.error("Vision extraction: all pages failed")
+        return ParsedBiodata()
+
+    except Exception as e:
+        logger.error(f"Vision extraction failed: {e}")
         return ParsedBiodata()
 
 

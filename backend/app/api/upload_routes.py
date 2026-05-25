@@ -1,6 +1,6 @@
 import uuid
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_session
 from app.core.auth import get_current_user
@@ -14,6 +14,9 @@ router = APIRouter(prefix="/api/uploads", tags=["uploads"])
 UPLOAD_DIR = Path("storage/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+# Valid extraction modes
+VALID_MODES = {"ocr", "vision"}
+
 
 def _file_type(ext: str) -> str:
     return "image" if ext in IMAGE_EXTENSIONS else ext
@@ -23,22 +26,41 @@ def _file_type(ext: str) -> str:
 async def upload_biodata(
     background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
+    extraction_mode: str = Form("ocr"),   # "ocr" or "vision"
     db: AsyncSession = Depends(get_session),
     current_user=Depends(get_current_user),
 ):
+    # Validate mode
+    mode = extraction_mode.strip().lower()
+    if mode not in VALID_MODES:
+        mode = "ocr"
+
     ext = Path(file.filename).suffix.lstrip(".").lower()
     if ext not in settings.allowed_extensions_set:
         raise HTTPException(400, f"File type .{ext} not allowed")
     content = await file.read()
     if len(content) > settings.max_upload_bytes:
         raise HTTPException(413, f"Exceeds {settings.MAX_UPLOAD_SIZE_MB}MB limit")
+
+    # Vision mode only works for images and PDFs
+    file_type = _file_type(ext)
+    if mode == "vision" and file_type not in ("image", "pdf"):
+        # DOCX / TXT have no pixels — fall back to OCR (text extraction) silently
+        mode = "ocr"
+
     stored = f"{uuid.uuid4().hex}_{file.filename}"
     file_path = UPLOAD_DIR / stored
     file_path.write_bytes(content)
+
     repo = UploadRepository(db)
     upload = await repo.create(
-        user_id=current_user.id, original_filename=file.filename,
-        stored_filename=stored, file_type=_file_type(ext), file_path=str(file_path))
+        user_id=current_user.id,
+        original_filename=file.filename,
+        stored_filename=stored,
+        file_type=file_type,
+        file_path=str(file_path),
+        extraction_mode=mode,
+    )
     background_tasks.add_task(process_upload, upload.id, db)
     return upload
 

@@ -17,6 +17,7 @@ class UploadResponseSchema(BaseModel):
     profiles_count: int
     error_message: Optional[str] = None
     model_used: Optional[str] = None
+    extraction_mode: Optional[str] = "ocr"
     created_at: datetime
     completed_at: Optional[datetime] = None
 
