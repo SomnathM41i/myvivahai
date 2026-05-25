@@ -55,16 +55,26 @@ class ProfileRepository:
         await self.db.refresh(profile)
         return profile
 
-    async def upsert(self, user_id: int, **kwargs) -> Profile:
-        profile = await self.get_by_user(user_id)
-        if profile:
-            for k, v in _filter_profile_kwargs(kwargs).items():
-                setattr(profile, k, v)
-            await self.db.flush()
-            await self.db.refresh(profile)
-        else:
-            profile = await self.create(user_id=user_id, **kwargs)
-        return profile
+    async def upsert(self, user_id: int, upload_id: int = None, **kwargs) -> Profile:
+        """
+        If upload_id is provided, upsert against that specific upload row so
+        that re-processing the same file updates the existing record rather
+        than duplicating it.  Otherwise fall back to always creating a new row.
+        This means every NEW upload creates a NEW profile row — profiles from
+        previous uploads are never overwritten or deleted.
+        """
+        if upload_id is not None:
+            profile = await self.get_by_upload_id(upload_id)
+            if profile:
+                # Re-processing the same upload — update in place
+                for k, v in _filter_profile_kwargs(kwargs).items():
+                    setattr(profile, k, v)
+                await self.db.flush()
+                await self.db.refresh(profile)
+                return profile
+
+        # New upload → always create a fresh profile row
+        return await self.create(user_id=user_id, upload_id=upload_id, **kwargs)
 
     async def delete(self, profile: Profile) -> None:
         await self.db.delete(profile)

@@ -31,8 +31,8 @@ from app.ai.validators.confidence_scoring import compute_confidence
 # ── Schema mapper — unchanged ──────────────────────────────────────────────
 from app.ai.transformers.schema_mapper import map_to_profile_fields
 
-# Char limit sent to Groq.  6 000 chars ≈ 1 500 tokens — enough for any biodata.
-_TEXT_LIMIT = 6000
+# Char limit sent to Groq.  8000 chars covers multi-profile newspaper pages.
+_TEXT_LIMIT = 8000
 
 
 async def process_upload(upload_id: int, db: AsyncSession) -> None:
@@ -62,6 +62,13 @@ async def process_upload(upload_id: int, db: AsyncSession) -> None:
         parsed = await parse_biodata_single_pass(trimmed, client)
         flat   = parsed.to_flat_dict()
 
+        # ── 2b. Handle multi-profile pages ────────────────────────────────
+        # The LLM may return a "profiles" array for newspaper pages with multiple cards.
+        # If so, save each profile as a separate DB row and use the first for confidence.
+        raw_json_root = flat  # used below for confidence scoring (first profile)
+        extra_profiles: list[dict] = flat.pop("profiles", []) or []
+        # extra_profiles is a list of flat dicts, each representing a separate card
+
         # ── 3. Confidence scoring ──────────────────────────────────────────
         confidence = compute_confidence(
             extracted_text=text,
@@ -78,22 +85,43 @@ async def process_upload(upload_id: int, db: AsyncSession) -> None:
             f"Upload {upload_id}: confidence={confidence.final_score:.2f} "
             f"({confidence.label}) | needs_review={confidence.needs_review}"
         )
+        logger.debug(
+            f"Upload {upload_id} OCR text preview (first 500 chars):\n"
+            f"{text[:500]!r}"
+        )
 
         # ── 4. Map to DB fields and save ────────────────────────────────────
         profile_fields = map_to_profile_fields(flat)
+        # upload_id is the key: same upload re-processed → update; new upload → new row
         await profile_repo.upsert(
             user_id=upload.user_id,
-            upload_id=upload_id,
+            upload_id=upload_id,      # <-- ensures previous profiles are NOT overwritten
             raw_json=json.dumps(flat),
             **profile_fields,
         )
+
+        # Save any additional profiles found on the same page (multi-profile pages)
+        profiles_saved = 1
+        for extra_flat in extra_profiles:
+            if not isinstance(extra_flat, dict):
+                continue
+            extra_fields = map_to_profile_fields(extra_flat)
+            # Use upload_id=None so these always create new rows (no upsert collision)
+            await profile_repo.create(
+                user_id=upload.user_id,
+                upload_id=upload_id,
+                raw_json=json.dumps(extra_flat),
+                **extra_fields,
+            )
+            profiles_saved += 1
+            logger.info(f"Upload {upload_id}: saved extra profile ({profiles_saved})")
 
         # ── 5. Mark upload done ─────────────────────────────────────────────
         await upload_repo.update_status(
             upload,
             UploadStatus.DONE,
             processed_output=json.dumps(flat),
-            profiles_count=1,
+            profiles_count=profiles_saved,
             model_used=upload.file_type,
             completed_at=datetime.now(timezone.utc),
         )

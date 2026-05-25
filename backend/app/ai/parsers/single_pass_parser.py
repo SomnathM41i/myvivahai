@@ -1,33 +1,3 @@
-"""
-PROBLEM 2 — SINGLE-PASS GROQ PARSER
-=====================================
-Replaces ALL separate parsers:
-  - app/ai/parsers/biodata_parser.py
-  - app/ai/parsers/family_parser.py
-  - app/ai/parsers/education_parser.py
-  - app/ai/parsers/occupation_parser.py
-
-And ALL separate prompt .txt files:
-  - app/ai/prompts/biodata_prompt.txt
-  - app/ai/prompts/family_prompt.txt
-  - app/ai/prompts/horoscope_prompt.txt
-  - app/ai/prompts/partner_preference_prompt.txt
-
-One API call → full structured JSON → Pydantic validation.
-
-Drop this file at:  app/ai/parsers/single_pass_parser.py
-
-Why this is better than your current approach:
-  - 1 Groq call instead of 4 → ~4× faster, ~40% fewer total tokens
-  - No repeated context (same text was being sent 4 times)
-  - Removes the artificial asyncio.sleep(4) delays between each call
-  - Single retry surface — one try/except instead of four
-  - Pydantic catches type mismatches before data reaches your DB
-  - All prompts in one place — easy to iterate and tune
-  - response_format=json_object → no markdown wrapping from Groq
-  - temperature=0.0 → deterministic, no field name drift between runs
-"""
-
 from __future__ import annotations
 
 import json
@@ -181,12 +151,47 @@ class ParsedBiodata(BaseModel):
 SYSTEM_PROMPT = """You are an expert Indian matrimonial biodata parser.
 You read biodata text written in English, Hindi, or Marathi (often mixed).
 You return ONLY valid JSON — no explanation, no markdown, no code fences.
-Set any field you cannot find to null. Never invent or guess values."""
+Set any field you cannot find to null. Never invent or guess values.
+
+IMPORTANT for Marathi/Hindi biodata:
+- नाव / पूर्ण नाव = full_name
+- जन्म तारीख / जन्मतारीख = date_of_birth
+- वय / वर्षे = age
+- शिक्षण / शैक्षणिक = highest_education
+- व्यवसाय / नोकरी = occupation
+- उत्पन्न / वार्षिक उत्पन्न = annual_income
+- राशी / रास = rashi
+- नक्षत्र = nakshatra
+- गोत्र = gotra
+- मंगळ = manglik
+- मोबाईल / संपर्क = mobile
+- जन्म वेळ / वेळ = birth_time
+- जन्म स्थळ = birth_place
+- जात / जाती = caste
+- पोटजात / पोट-जात = sub_caste
+- शहर / गाव = city
+- वडील / पिता = father_name
+- आई / माता = mother_name
+- भाऊ = brothers
+- बहीण = sisters
+
+Extract the FIRST biodata profile if multiple profiles appear in the text.
+For multi-profile pages, extract ALL profiles as separate JSON objects in an array under key "profiles".
+If only one profile, use the standard flat structure (not array)."""
 
 
 SINGLE_PASS_PROMPT = """Extract ALL information from the matrimonial biodata text below.
 Return a single JSON object with EXACTLY this structure.
 Use null for every field you cannot find. Do NOT add extra keys.
+
+MARATHI/HINDI KEYWORD MAPPINGS — if you see these words in the text, map them to the JSON field shown:
+नाव / पूर्ण नाव → full_name | जन्म तारीख → date_of_birth | वय → age | उंची → height
+शिक्षण / पदवी → highest_education | महाविद्यालय → college | व्यवसाय / नोकरी → occupation
+उत्पन्न / वार्षिक उत्पन्न → annual_income | राशी / रास → rashi | नक्षत्र → nakshatra
+गोत्र → gotra | मंगळ → manglik | मोबाईल / फोन → mobile | ईमेल → email
+जात → caste | पोटजात → sub_caste | धर्म → religion | वडील / पिता → father_name
+आई / माता → mother_name | भाऊ → brothers | बहीण → sisters | रक्तगट → blood_group
+जन्म वेळ → birth_time | जन्म स्थळ → birth_place | शहर / गाव → city | राज्य → state
 
 {{
   "personal": {{
@@ -260,11 +265,11 @@ BIODATA TEXT:
 {text}"""
 
 
-def build_prompt(text: str, char_limit: int = 6000) -> str:
+def build_prompt(text: str, char_limit: int = 8000) -> str:
     """
     Build the final prompt string.
-    6000 chars ≈ ~1500 tokens — enough for any single biodata page.
-    Sending more wastes tokens and can push past Groq's rate-limit budget.
+    8000 chars covers multi-profile newspaper pages (was 6000).
+    Newspaper biodata pages often have 2-3 profiles so we need more room.
     """
     return SINGLE_PASS_PROMPT.format(text=text[:char_limit])
 

@@ -47,11 +47,13 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Configuration — tweak these without touching logic
 # ---------------------------------------------------------------------------
-OCR_LANG = "eng+hin+mar"          # Tesseract language string
-OCR_CONFIDENCE_THRESHOLD = 60     # Tesseract mean word-confidence below which
-                                   # EasyOCR fallback is triggered (0-100)
-MIN_IMAGE_WIDTH = 1000            # Images narrower than this are upscaled
-EASYOCR_LANGUAGES = ["en", "hi"] # EasyOCR language codes
+OCR_LANG = "eng+hin+mar"          # Tesseract language string — eng+hin+mar covers
+                                   # English, Hindi (Devanagari), and Marathi
+OCR_CONFIDENCE_THRESHOLD = 50     # Lower threshold — Marathi text scores lower due to
+                                   # mixed-script content; 50 is more realistic than 60
+MIN_IMAGE_WIDTH = 1200            # Newspaper biodata columns are narrow; upscale more
+EASYOCR_LANGUAGES = ["en", "hi"] # EasyOCR language codes (no dedicated Marathi model;
+                                   # hi covers Devanagari which Marathi uses)
 TESSERACT_CMD = os.getenv("TESSERACT_CMD", "/usr/bin/tesseract")
 
 
@@ -76,24 +78,37 @@ def preprocess_image(img_array: np.ndarray) -> np.ndarray:
     Full preprocessing pipeline for a single image (numpy BGR array).
 
     Steps:
-      a) Upscale if too small (WhatsApp compressed images)
+      a) Upscale if too small (WhatsApp compressed images, newspaper scans)
       b) Convert to grayscale
-      c) Denoise
-      d) Deskew (auto-rotate)
-      e) Adaptive threshold — handles uneven lighting better than Otsu
+      c) CLAHE contrast enhancement — handles uneven exposure in phone photos
+      d) Sharpen — recovers edge detail lost in JPEG compression
+      e) Denoise
+      f) Deskew (auto-rotate)
+      g) Adaptive threshold — handles uneven lighting better than Otsu
+         (critical for newspaper biodata pages with grey backgrounds)
     """
     img = _upscale_if_needed(img_array)
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # CLAHE contrast enhancement — especially helps dark/washed-out phone photos
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    gray = clahe.apply(gray)
+
+    # Unsharp mask to recover compressed-away text edges
+    blurred = cv2.GaussianBlur(gray, (0, 0), 3)
+    gray = cv2.addWeighted(gray, 1.5, blurred, -0.5, 0)
+
     denoised = cv2.fastNlMeansDenoising(gray, h=10)
     deskewed = _deskew(denoised)
+
     # Adaptive threshold — MUCH better than global Otsu for
-    # WhatsApp-compressed or unevenly lit biodata photos
+    # WhatsApp-compressed or unevenly lit biodata photos and newspaper pages
     thresh = cv2.adaptiveThreshold(
         deskewed, 255,
         cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
         cv2.THRESH_BINARY,
-        blockSize=31,
-        C=10,
+        blockSize=25,     # Smaller block: better for dense Marathi/Hindi glyphs
+        C=8,
     )
     return thresh
 
@@ -171,12 +186,17 @@ def _tesseract_ocr(processed: np.ndarray) -> tuple[str, float]:
 
     pil_img = Image.fromarray(processed)
 
+    # --psm 3 = auto-detect page layout (handles multi-column newspaper biodata)
+    # --psm 6 = single uniform block (use for clean single-profile images)
+    # We try psm 3 first (better for newspaper multi-profile pages)
+    TESS_CONFIG = "--psm 3 --oem 1"
+
     # Get per-word confidence
     data = pytesseract.image_to_data(
         pil_img,
         lang=OCR_LANG,
         output_type=pytesseract.Output.DICT,
-        config="--psm 6",          # Assume a block of text (good for biodata)
+        config=TESS_CONFIG,
     )
 
     confidences = [
@@ -185,12 +205,18 @@ def _tesseract_ocr(processed: np.ndarray) -> tuple[str, float]:
     ]
     mean_conf = sum(confidences) / len(confidences) if confidences else 0.0
 
-    # Rebuild clean text
+    # Lower word-confidence threshold to 20 for Marathi/Hindi text
+    # (Devanagari script typically scores 20-50 even when correctly read)
     words = [
         w for w, c in zip(data["text"], data["conf"])
-        if str(c).lstrip("-").isdigit() and int(c) > 30 and w.strip()
+        if str(c).lstrip("-").isdigit() and int(c) > 20 and w.strip()
     ]
     text = " ".join(words)
+
+    logger.debug(
+        f"Tesseract: {len(words)} words, mean_conf={mean_conf:.1f}, "
+        f"text_len={len(text)}"
+    )
 
     return text, mean_conf / 100.0    # Normalise to 0-1
 
