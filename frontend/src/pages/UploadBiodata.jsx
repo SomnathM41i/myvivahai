@@ -1,15 +1,3 @@
-/**
- * UploadBiodata.jsx  —  unified upload + live stream + history management
- *
- * What changed vs original:
- *  - Extraction mode toggle: "OCR" vs "Vision (Direct AI)"
- *  - Vision mode sends the image/PDF directly to the vision LLM — no OCR step
- *  - Mode is stored per-upload in the DB and shown in history
- *  - Uploads now go to /api/biodata/upload (Celery + SSE path), not /api/uploads/
- *  - Live extraction pipeline is shown inline after upload
- *  - Upload history has Delete and Retry buttons per row
- */
-
 import { useCallback, useState, useRef } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -69,7 +57,7 @@ const MODES = {
     bg:      'bg-purple-50',
     badge:   'bg-purple-100 text-purple-700',
     title:   'Vision AI (Recommended for images)',
-    desc:    'Sends image/PDF directly to AI vision model — no OCR needed. Best for Marathi, Hindi, and phone photos.',
+    desc:    'AI vision model Best for Marathi, Hindi, and phone photos.',
     works:   ['Marathi / Hindi biodata', 'Phone photos', 'WhatsApp images', 'Newspaper biodata pages'],
     notBest: ['DOCX / TXT files (falls back to OCR automatically)'],
   },

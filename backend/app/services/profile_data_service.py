@@ -121,7 +121,14 @@ class ProfileDataService:
             raise HTTPException(500, "openpyxl not installed — cannot generate xlsx")
 
         profile = await self._get_owned(profile_id, user_id)
-        data = self._profile_to_export_dict(profile)
+        raw_data = self._profile_to_export_dict(profile)
+        # Eagerly convert all values to plain Python strings while the
+        # SQLAlchemy session is still open — prevents DetachedInstanceError
+        # and openpyxl serialisation failures on lazy-loaded attributes.
+        data: dict = {
+            str(label): str(value) if value is not None else ""
+            for label, value in raw_data.items()
+        }
         data["Exported At"] = datetime.utcnow().isoformat()
 
         wb = openpyxl.Workbook()

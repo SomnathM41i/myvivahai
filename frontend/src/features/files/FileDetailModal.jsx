@@ -6,11 +6,10 @@ import { useEffect, useState } from 'react'
 import { X, Download, RefreshCw, Trash2, FileText } from 'lucide-react'
 import JsonViewer from '../../components/ui/JsonViewer'
 import StatusBadge from '../../components/ui/StatusBadge'
-import { getDownloadUrl } from '../../services/fileService'
-import { getProfile, exportProfileJson, exportProfileCsv, exportProfileXlsx } from '../../services/profileDataService'
+import { exportProfileJson, exportProfileCsv, exportProfileXlsx } from '../../services/profileDataService'
 import { formatBytes, formatDate } from '../../utils/formatter'
 
-export default function FileDetailModal({ file, onClose, onDelete, onReprocess }) {
+export default function FileDetailModal({ file, onClose, onDelete, onReprocess, onDownload, downloading }) {
   const [profile, setProfile] = useState(null)
   const [profileLoading, setProfileLoading] = useState(false)
   const [exporting, setExporting] = useState(false)
@@ -170,14 +169,13 @@ useEffect(() => {
 
         {/* Footer actions */}
         <div className="p-4 border-t border-gray-200 flex items-center gap-2 flex-wrap">
-          <a
-            href={getDownloadUrl(file.id)}
-            target="_blank"
-            rel="noreferrer"
+          <button
+            onClick={onDownload}
+            disabled={downloading}
             className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
           >
-            <Download size={14} /> Download
-          </a>
+            <Download size={14} /> {downloading ? 'Downloading' : 'Download'}
+          </button>
           <button
             onClick={() => onReprocess(file.id)}
             disabled={file.status === 'processing'}

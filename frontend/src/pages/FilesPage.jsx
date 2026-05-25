@@ -9,7 +9,7 @@ import {
   Filter, Loader2, AlertCircle, FileUp
 } from 'lucide-react'
 import { useFiles } from '../hooks/useFiles'
-import { getDownloadUrl } from '../services/fileService'
+import { downloadFile } from '../services/fileService'
 import StatusBadge from '../components/ui/StatusBadge'
 import Pagination from '../components/ui/Pagination'
 import ConfirmDialog from '../components/ui/ConfirmDialog'
@@ -31,6 +31,7 @@ export default function FilesPage() {
   const [deleteTarget, setDeleteTarget]     = useState(null)
   const [deleteLoading, setDeleteLoading]   = useState(false)
   const [actionLoading, setActionLoading]   = useState({}) // { [fileId]: bool }
+  const [downloadLoading, setDownloadLoading] = useState({}) // { [fileId]: bool }
 
   const markLoading = (id, val) =>
     setActionLoading((prev) => ({ ...prev, [id]: val }))
@@ -53,6 +54,15 @@ export default function FilesPage() {
       await handleReprocess(fileId)
     } finally {
       markLoading(fileId, false)
+    }
+  }
+
+  const onDownload = async (file) => {
+    setDownloadLoading((prev) => ({ ...prev, [file.id]: true }))
+    try {
+      await downloadFile(file.id, file.original_filename)
+    } finally {
+      setDownloadLoading((prev) => ({ ...prev, [file.id]: false }))
     }
   }
 
@@ -159,6 +169,8 @@ export default function FilesPage() {
                       onView={() => setSelectedFile(file)}
                       onDelete={() => setDeleteTarget(file)}
                       onReprocess={() => onReprocess(file.id)}
+                      onDownload={() => onDownload(file)}
+                      downloading={downloadLoading[file.id]}
                     />
                   ))}
                 </tbody>
@@ -175,6 +187,8 @@ export default function FilesPage() {
                   onView={() => setSelectedFile(file)}
                   onDelete={() => setDeleteTarget(file)}
                   onReprocess={() => onReprocess(file.id)}
+                  onDownload={() => onDownload(file)}
+                  downloading={downloadLoading[file.id]}
                 />
               ))}
             </div>
@@ -199,6 +213,8 @@ export default function FilesPage() {
           onClose={() => setSelectedFile(null)}
           onDelete={(id) => { setSelectedFile(null); setDeleteTarget(items.find((f) => f.id === id)) }}
           onReprocess={(id) => onReprocess(id)}
+          onDownload={() => onDownload(selectedFile)}
+          downloading={downloadLoading[selectedFile.id]}
         />
       )}
 
@@ -218,7 +234,7 @@ export default function FilesPage() {
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function FileRow({ file, loading, onView, onDelete, onReprocess }) {
+function FileRow({ file, loading, downloading, onView, onDelete, onReprocess, onDownload }) {
   return (
     <tr className="hover:bg-gray-50 transition-colors">
       <td className="px-5 py-3">
@@ -237,7 +253,13 @@ function FileRow({ file, loading, onView, onDelete, onReprocess }) {
       <td className="px-5 py-3">
         <div className="flex items-center justify-end gap-1">
           <ActionBtn icon={Eye} title="View" onClick={onView} />
-          <ActionBtn icon={Download} title="Download" href={getDownloadUrl(file.id)} />
+          <ActionBtn
+            icon={downloading ? Loader2 : Download}
+            title="Download"
+            onClick={onDownload}
+            disabled={downloading}
+            iconClass={downloading ? 'animate-spin' : ''}
+          />
           <ActionBtn
             icon={loading ? Loader2 : RefreshCw}
             title="Reprocess"
@@ -253,7 +275,7 @@ function FileRow({ file, loading, onView, onDelete, onReprocess }) {
   )
 }
 
-function FileCard({ file, loading, onView, onDelete, onReprocess }) {
+function FileCard({ file, loading, downloading, onView, onDelete, onReprocess, onDownload }) {
   return (
     <div className="p-4 space-y-2">
       <div className="flex items-start justify-between gap-2">
@@ -265,10 +287,10 @@ function FileCard({ file, loading, onView, onDelete, onReprocess }) {
       </div>
       <div className="flex items-center gap-2 pt-1">
         <button onClick={onView} className="flex-1 py-1.5 text-xs text-center bg-indigo-50 text-indigo-700 rounded-lg font-medium">View</button>
-        <a href={getDownloadUrl(file.id)} target="_blank" rel="noreferrer"
-          className="flex-1 py-1.5 text-xs text-center bg-gray-100 text-gray-700 rounded-lg font-medium">
-          Download
-        </a>
+        <button onClick={onDownload} disabled={downloading}
+          className="flex-1 py-1.5 text-xs text-center bg-gray-100 text-gray-700 rounded-lg font-medium disabled:opacity-50">
+          {downloading ? 'Downloading' : 'Download'}
+        </button>
         <button onClick={onReprocess} disabled={file.status === 'processing' || loading}
           className="flex-1 py-1.5 text-xs text-center bg-blue-50 text-blue-700 rounded-lg font-medium disabled:opacity-50">
           Reprocess
@@ -281,15 +303,8 @@ function FileCard({ file, loading, onView, onDelete, onReprocess }) {
   )
 }
 
-function ActionBtn({ icon: Icon, title, onClick, href, disabled, className = 'text-gray-500 hover:text-gray-700', iconClass = '' }) {
+function ActionBtn({ icon: Icon, title, onClick, disabled, className = 'text-gray-500 hover:text-gray-700', iconClass = '' }) {
   const cls = `p-1.5 rounded-md transition-colors ${className} ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`
-  if (href) {
-    return (
-      <a href={href} target="_blank" rel="noreferrer" title={title} className={cls}>
-        <Icon size={15} className={iconClass} />
-      </a>
-    )
-  }
   return (
     <button onClick={onClick} disabled={disabled} title={title} className={cls}>
       <Icon size={15} className={iconClass} />

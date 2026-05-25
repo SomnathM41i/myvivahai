@@ -36,8 +36,36 @@ export async function reprocessFile(fileId) {
   return data
 }
 
-/** Returns the download URL — open directly in browser for file save dialog */
-export function getDownloadUrl(fileId) {
-  const base = import.meta.env.VITE_API_URL || '/api'
-  return `${base}/files/${fileId}/download`
+function getFilenameFromDisposition(disposition) {
+  if (!disposition) return null
+
+  const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i)
+  if (utf8Match?.[1]) return decodeURIComponent(utf8Match[1].replace(/"/g, ''))
+
+  const filenameMatch = disposition.match(/filename="?([^"]+)"?/i)
+  return filenameMatch?.[1] || null
+}
+
+function saveBlob(blob, filename) {
+  const href = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = href
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(href)
+}
+
+/** Download through the authenticated API client so protected files include the bearer token. */
+export async function downloadFile(fileId, fallbackFilename = 'download') {
+  const response = await api.get(`/files/${fileId}/download`, {
+    responseType: 'blob',
+  })
+
+  const filename =
+    getFilenameFromDisposition(response.headers['content-disposition']) ||
+    fallbackFilename
+
+  saveBlob(response.data, filename)
 }
