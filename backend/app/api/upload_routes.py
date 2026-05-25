@@ -1,8 +1,9 @@
+import asyncio
 import uuid
 from pathlib import Path
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database import get_session
+from app.database import get_session, AsyncSessionLocal
 from app.core.auth import get_current_user
 from app.core.constants import IMAGE_EXTENSIONS, UploadStatus
 from app.config import settings
@@ -14,6 +15,11 @@ router = APIRouter(prefix="/api/uploads", tags=["uploads"])
 UPLOAD_DIR = Path("storage/uploads")
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+
+async def _process_in_background(upload_id: int):
+    async with AsyncSessionLocal() as db:
+        await process_upload(upload_id, db)
+
 # Valid extraction modes
 VALID_MODES = {"ocr", "vision"}
 
@@ -24,7 +30,6 @@ def _file_type(ext: str) -> str:
 
 @router.post("/", response_model=UploadResponseSchema)
 async def upload_biodata(
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     extraction_mode: str = Form("ocr"),   # "ocr" or "vision"
     db: AsyncSession = Depends(get_session),
@@ -61,7 +66,7 @@ async def upload_biodata(
         file_path=str(file_path),
         extraction_mode=mode,
     )
-    background_tasks.add_task(process_upload, upload.id, db)
+    asyncio.create_task(_process_in_background(upload.id))
     return upload
 
 
@@ -107,7 +112,6 @@ async def delete_upload(
 @router.post("/{upload_id}/retry", response_model=UploadResponseSchema)
 async def retry_upload(
     upload_id: int,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_session),
     current_user=Depends(get_current_user),
 ):
@@ -128,5 +132,5 @@ async def retry_upload(
         profiles_count=0,
         completed_at=None,
     )
-    background_tasks.add_task(process_upload, upload.id, db)
+    asyncio.create_task(_process_in_background(upload.id))
     return upload

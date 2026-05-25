@@ -6,7 +6,7 @@ import { useEffect, useState } from 'react'
 import { X, Download, RefreshCw, Trash2, FileText } from 'lucide-react'
 import JsonViewer from '../../components/ui/JsonViewer'
 import StatusBadge from '../../components/ui/StatusBadge'
-import { exportProfileJson, exportProfileCsv, exportProfileXlsx } from '../../services/profileDataService'
+import { exportProfileJson, exportProfileCsv, exportProfileXlsx, getProfileByUploadId } from '../../services/profileDataService'
 import { formatBytes, formatDate } from '../../utils/formatter'
 
 export default function FileDetailModal({ file, onClose, onDelete, onReprocess, onDownload, downloading }) {
@@ -30,8 +30,7 @@ useEffect(() => {
     // Also fetch the full profile record (has id, needed for exports)
     if (file.status === 'done') {
       setProfileLoading(true)
-      import('../../services/profileDataService')
-        .then(({ getProfileByUploadId }) => getProfileByUploadId(file.id))
+      getProfileByUploadId(file.id)
         .then((p) => { if (p) setProfile(p) })
         .catch(() => {})
         .finally(() => setProfileLoading(false))
@@ -53,11 +52,16 @@ useEffect(() => {
     }
   }
 
-  const jsonData = profile?.raw_json
-    ? (typeof profile.raw_json === 'string' ? JSON.parse(profile.raw_json) : profile.raw_json)
-    : file.processed_output
-      ? JSON.parse(file.processed_output)
-      : null
+  let jsonData = null
+  if (profile?.raw_json) {
+    if (typeof profile.raw_json === 'string') {
+      try { jsonData = JSON.parse(profile.raw_json) } catch { jsonData = null }
+    } else {
+      jsonData = profile.raw_json
+    }
+  } else if (file.processed_output) {
+    try { jsonData = JSON.parse(file.processed_output) } catch { jsonData = null }
+  }
 
   return (
     <div className="fixed inset-0 z-40 flex justify-end">

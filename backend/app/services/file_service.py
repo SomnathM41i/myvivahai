@@ -3,11 +3,12 @@ app/services/file_service.py
 Business logic for file management operations.
 Routes call this — never query the DB or touch the filesystem directly.
 """
+import asyncio
 import math
 from pathlib import Path
 from typing import Optional
 
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.constants import UploadStatus
@@ -80,7 +81,6 @@ class FileService:
         self,
         upload_id: int,
         user_id: int,
-        background_tasks: BackgroundTasks,
     ):
         upload = await self._get_owned(upload_id, user_id)
 
@@ -100,10 +100,13 @@ class FileService:
         )
         await self._db.commit()
 
-        # Import here to avoid circular imports
-        from app.services.profile_service import process_upload
-        background_tasks.add_task(process_upload, upload.id, self._db)
+        async def _run():
+            from app.database import AsyncSessionLocal
+            from app.services.profile_service import process_upload
+            async with AsyncSessionLocal() as session:
+                await process_upload(upload.id, session)
 
+        asyncio.create_task(_run())
         return upload
 
     async def get_download_path(self, upload_id: int, user_id: int) -> Path:

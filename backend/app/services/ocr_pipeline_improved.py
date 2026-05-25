@@ -292,6 +292,7 @@ def ocr_image(file_path: str) -> OCRResult:
         f"Tesseract conf={tess_conf:.2f} below threshold "
         f"({OCR_CONFIDENCE_THRESHOLD/100:.2f}) — trying EasyOCR"
     )
+    easy_text, easy_conf = "", 0.0
     try:
         easy_text, easy_conf = _easyocr_ocr(raw)       # Feed original, not processed
         if easy_conf >= tess_conf and len(easy_text.strip()) > len(tess_text.strip()):
@@ -305,7 +306,7 @@ def ocr_image(file_path: str) -> OCRResult:
         logger.warning(f"EasyOCR fallback failed: {e}")
 
     # --- Both engines ran; return whichever produced more text ---
-    if len(tess_text) >= len(easy_text if "easy_text" in dir() else ""):
+    if len(tess_text) >= len(easy_text):
         return OCRResult(
             text=tess_text,
             ocr_confidence=round(tess_conf, 2),

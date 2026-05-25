@@ -115,9 +115,14 @@ export default function ProfileDataPage() {
     )
   }
 
-  const jsonData = profile?.raw_json
-    ? (typeof profile.raw_json === 'string' ? JSON.parse(profile.raw_json) : profile.raw_json)
-    : null
+  let jsonData = null
+  if (profile?.raw_json) {
+    if (typeof profile.raw_json === 'string') {
+      try { jsonData = JSON.parse(profile.raw_json) } catch { jsonData = null }
+    } else {
+      jsonData = profile.raw_json
+    }
+  }
 
   const slug = (profile?.full_name || 'profile').toLowerCase().replace(/\s+/g, '_')
 

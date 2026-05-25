@@ -14,7 +14,7 @@ export default function Login() {
     const t = params.get('access_token')
     if (t) { setToken(t); navigate('/dashboard', { replace: true }) }
     else if (token) navigate('/dashboard', { replace: true })
-  }, [])
+  }, [token, setToken, navigate])
 
   return (
     <div className="card">

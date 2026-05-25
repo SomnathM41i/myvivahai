@@ -1,7 +1,7 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import create_engine
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from app.config import settings
-
 
 engine = create_async_engine(
     settings.DATABASE_URL,
@@ -21,6 +21,26 @@ AsyncSessionLocal = async_sessionmaker(
 
 class Base(DeclarativeBase):
     pass
+
+
+SYNC_DATABASE_URL = settings.DATABASE_URL.replace("+aiosqlite", "")  # sqlite:///... for sync
+
+sync_engine = create_engine(
+    SYNC_DATABASE_URL,
+    echo=not settings.is_production,
+    pool_pre_ping=True,
+    connect_args={
+        "check_same_thread": False,
+        "timeout": 30,
+    } if "sqlite" in SYNC_DATABASE_URL else {},
+)
+
+SessionLocal = sessionmaker(
+    bind=sync_engine,
+    expire_on_commit=False,
+    autoflush=False,
+    autocommit=False,
+)
 
 
 async def create_tables():

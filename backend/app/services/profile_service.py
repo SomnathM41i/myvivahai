@@ -29,14 +29,14 @@ from app.ai.transformers.schema_mapper import map_to_profile_fields
 _TEXT_LIMIT = 8000
 
 
-async def process_upload(upload_id: int, db: AsyncSession) -> None:
+async def process_upload(upload_id: int, db: AsyncSession) -> dict | None:
     upload_repo  = UploadRepository(db)
     profile_repo = ProfileRepository(db)
 
     upload = await upload_repo.get_by_id(upload_id)
     if not upload:
         logger.error(f"Upload {upload_id} not found")
-        return
+        return None
 
     await upload_repo.update_status(upload, UploadStatus.PROCESSING)
 
@@ -56,6 +56,7 @@ async def process_upload(upload_id: int, db: AsyncSession) -> None:
             )
             flat          = parsed.to_flat_dict()
             ocr_confidence = None   # No OCR step — skip tesseract conf scoring
+            flat["raw_json"] = json.dumps(flat)
 
             # Store a note in extracted_text so retries / debugging are clear
             await upload_repo.update_status(
@@ -137,6 +138,7 @@ async def process_upload(upload_id: int, db: AsyncSession) -> None:
         )
         await db.commit()
         logger.info(f"Upload {upload_id} processed OK ({mode} mode)")
+        return flat
 
     except Exception as e:
         logger.exception(f"Upload {upload_id} failed: {e}")

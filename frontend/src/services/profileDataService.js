@@ -20,12 +20,7 @@ export async function deleteProfile(profileId) {
 
 /** Trigger a file download from the export endpoint */
 async function downloadExport(url, filename) {
-  const token = localStorage.getItem('access_token')
-  const res = await fetch(url, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  })
-  if (!res.ok) throw new Error(`Export failed: ${res.status}`)
-  const blob = await res.blob()
+  const { data: blob } = await api.get(url, { responseType: 'blob' })
   const href = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = href
@@ -35,18 +30,15 @@ async function downloadExport(url, filename) {
 }
 
 export async function exportProfileJson(profileId, name = 'profile') {
-  const base = import.meta.env.VITE_API_URL || '/api'
-  await downloadExport(`${base}/profiles/${profileId}/export/json`, `${name}_profile.json`)
+  await downloadExport(`/profiles/${profileId}/export/json`, `${name}_profile.json`)
 }
 
 export async function exportProfileCsv(profileId, name = 'profile') {
-  const base = import.meta.env.VITE_API_URL || '/api'
-  await downloadExport(`${base}/profiles/${profileId}/export/csv`, `${name}_profile.csv`)
+  await downloadExport(`/profiles/${profileId}/export/csv`, `${name}_profile.csv`)
 }
 
 export async function exportProfileXlsx(profileId, name = 'profile') {
-  const base = import.meta.env.VITE_API_URL || '/api'
-  await downloadExport(`${base}/profiles/${profileId}/export/xlsx`, `${name}_profile.xlsx`)
+  await downloadExport(`/profiles/${profileId}/export/xlsx`, `${name}_profile.xlsx`)
 }
 
 export async function getProfileByUploadId(uploadFileId) {

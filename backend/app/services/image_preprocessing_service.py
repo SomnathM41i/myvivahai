@@ -3,12 +3,13 @@ from app.core.logger import logger
 
 try:
     import cv2
-    CV2_AVAILABLE = True
 except ImportError:
-    CV2_AVAILABLE = False
+    cv2 = None
 
 
 def preprocess_image(file_path: str) -> str:
+    if cv2 is None:
+        raise ImportError("cv2 (opencv-python) is not installed")
     img = cv2.imread(file_path)
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)

@@ -12,8 +12,8 @@ from docx import Document
 from groq import Groq
 
 from app.core.config import settings
-from app.db.session import SessionLocal
-from app.models.profile import Profile
+from app.database import SessionLocal
+from app.models.profile_model import Profile
 
 
 GROQ_PROMPT = """

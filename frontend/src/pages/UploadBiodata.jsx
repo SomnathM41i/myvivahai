@@ -1,4 +1,4 @@
-import { useCallback, useState, useRef } from 'react'
+import { useCallback, useState, useRef, useLayoutEffect } from 'react'
 import { useDropzone } from 'react-dropzone'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -242,7 +242,7 @@ export default function UploadBiodata() {
           transition-all mb-6
           ${isDragActive          ? `${currentMode.border} ${currentMode.bg}`
           : isStreaming           ? 'border-primary-300 bg-primary-50/40 cursor-not-allowed opacity-60'
-          : `border-gray-300 hover:${currentMode.border} hover:bg-gray-50`}`}
+          : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'}`}
       >
         <input {...getInputProps()} />
         <Upload className="mx-auto text-gray-400 mb-3" size={40} />
@@ -309,7 +309,9 @@ export default function UploadBiodata() {
 
 function StreamPanel({ stream, mode }) {
   const logRef = useRef()
-  if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
+  useLayoutEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
+  })
 
   const isDone  = stream.status === 'done'
   const isError = stream.status === 'error'

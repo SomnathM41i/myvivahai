@@ -6,7 +6,7 @@ HTTP concerns (parsing query params, returning responses).
 """
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
@@ -73,7 +73,6 @@ async def delete_file(
 @router.post("/{file_id}/reprocess", response_model=UploadResponseSchema)
 async def reprocess_file(
     file_id: int,
-    background_tasks: BackgroundTasks,
     svc: FileService = Depends(_svc),
     current_user=Depends(get_current_user),
 ):
@@ -82,7 +81,7 @@ async def reprocess_file(
     Resets status to 'pending' and clears previous output.
     Returns 409 if already processing, 410 if the source file is missing.
     """
-    return await svc.reprocess_file(file_id, current_user.id, background_tasks)
+    return await svc.reprocess_file(file_id, current_user.id)
 
 
 @router.get("/{file_id}/download")
