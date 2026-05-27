@@ -21,8 +21,9 @@ from app.repositories.profile_repository import ProfileRepository
 from app.ai.parsers.single_pass_parser import (
     parse_biodata_single_pass,
     parse_biodata_vision,
+    parse_biodata_gemini_vision,
 )
-from app.ai.llm_client import get_groq_client
+from app.ai.llm_client import get_groq_client, get_gemini_client
 from app.ai.validators.confidence_scoring import compute_confidence
 from app.ai.transformers.schema_mapper import map_to_profile_fields
 
@@ -48,7 +49,7 @@ async def process_upload(upload_id: int, db: AsyncSession) -> dict | None:
         client = get_groq_client()
 
         if mode == "vision":
-            # ── VISION PATH: send file directly to vision LLM ────────────
+            # ── VISION PATH: Groq vision LLM ────────────────────────────
             parsed = await parse_biodata_vision(
                 file_path=upload.file_path,
                 file_type=upload.file_type,
@@ -61,7 +62,24 @@ async def process_upload(upload_id: int, db: AsyncSession) -> dict | None:
             # Store a note in extracted_text so retries / debugging are clear
             await upload_repo.update_status(
                 upload, UploadStatus.PROCESSING,
-                extracted_text="[vision mode — image sent directly to LLM, no OCR text]",
+                extracted_text="[vision mode — Groq vision LLM, no OCR text]",
+            )
+
+        elif mode == "gemini":
+            # ── GEMINI VISION PATH: Gemini vision LLM ───────────────────
+            gemini_client = get_gemini_client()
+            parsed = await parse_biodata_gemini_vision(
+                file_path=upload.file_path,
+                file_type=upload.file_type,
+                gemini_client=gemini_client,
+            )
+            flat          = parsed.to_flat_dict()
+            ocr_confidence = None
+            flat["raw_json"] = json.dumps(flat)
+
+            await upload_repo.update_status(
+                upload, UploadStatus.PROCESSING,
+                extracted_text="[gemini mode — Gemini vision LLM, no OCR text]",
             )
 
         else:

@@ -33,6 +33,7 @@ export default {
         'shimmer': 'shimmer 2s infinite linear',
         'float': 'float 3s ease-in-out infinite',
         'glow-pulse': 'glow-pulse 2s ease-in-out infinite',
+        'progress': 'progress-indeterminate 1.5s ease-in-out infinite',
       },
       keyframes: {
         shimmer: {
@@ -46,6 +47,11 @@ export default {
         'glow-pulse': {
           '0%, 100%': { boxShadow: '0 0 12px rgba(124,58,237,0.2)' },
           '50%': { boxShadow: '0 0 24px rgba(124,58,237,0.4)' },
+        },
+        'progress-indeterminate': {
+          '0%': { transform: 'translateX(-100%)', width: '40%' },
+          '50%': { transform: 'translateX(150%)', width: '60%' },
+          '100%': { transform: 'translateX(400%)', width: '40%' },
         },
       },
     },

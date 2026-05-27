@@ -21,7 +21,8 @@ node_modules/
 dist/
 .cache/
 
-# IDE
+# IDE / Config
 .vscode/
 .idea/
+.opencode/
 *.swp

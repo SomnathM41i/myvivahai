@@ -16,7 +16,11 @@ class Settings(BaseSettings):
 
     GROQ_API_KEY: str = ""
     GROQ_MODEL: str = ""
+    GROQ_VISION_MODEL: str = "meta-llama/llama-4-scout-17b-16e-instruct"
     ANTHROPIC_API_KEY: str = ""
+
+    GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-2.5-flash"
 
     STORAGE_BACKEND: str = "local"
     MAX_UPLOAD_SIZE_MB: int = 20

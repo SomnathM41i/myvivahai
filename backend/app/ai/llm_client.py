@@ -33,6 +33,18 @@ def get_groq_client() -> AsyncOpenAI:
     )
 
 
+def get_gemini_client() -> AsyncOpenAI:
+    """
+    Fresh Gemini client per request (OpenAI-compatible endpoint).
+    """
+
+    return AsyncOpenAI(
+        api_key=settings.GEMINI_API_KEY,
+        base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+        timeout=60.0,
+    )
+
+
 @retry(
     retry=retry_if_exception_type((
         RateLimitError,

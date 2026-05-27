@@ -47,6 +47,14 @@ export function useFiles() {
     [page, search, status, fileType]
   )
 
+  // Poll when any file is pending or processing
+  useEffect(() => {
+    const hasPending = items.some(f => ['pending', 'processing'].includes(f.status))
+    if (!hasPending) return
+    const timer = setInterval(() => fetchFiles(), 3000)
+    return () => clearInterval(timer)
+  }, [items, fetchFiles])
+
   // Initial load + refresh when filters change
   useEffect(() => {
     fetchFiles({ page: 1 })

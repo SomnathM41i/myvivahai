@@ -21,7 +21,7 @@ async def _process_in_background(upload_id: int):
         await process_upload(upload_id, db)
 
 # Valid extraction modes
-VALID_MODES = {"ocr", "vision"}
+VALID_MODES = {"ocr", "vision", "gemini"}
 
 
 def _file_type(ext: str) -> str:
@@ -31,7 +31,7 @@ def _file_type(ext: str) -> str:
 @router.post("/", response_model=UploadResponseSchema)
 async def upload_biodata(
     file: UploadFile = File(...),
-    extraction_mode: str = Form("ocr"),   # "ocr" or "vision"
+    extraction_mode: str = Form("ocr"),   # "ocr", "vision", or "gemini"
     db: AsyncSession = Depends(get_session),
     current_user=Depends(get_current_user),
 ):

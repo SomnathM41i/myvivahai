@@ -363,11 +363,8 @@ async def parse_biodata_single_pass(
 import base64
 import mimetypes
 
-# Vision-capable Groq models (as of 2025)
-_VISION_MODELS = [
-    "meta-llama/llama-4-scout-17b-16e-instruct",
-    "meta-llama/llama-4-maverick-17b-128e-instruct",
-]
+# Vision model is now configured via .env: GROQ_VISION_MODEL
+# Default: meta-llama/llama-4-scout-17b-16e-instruct
 
 VISION_SYSTEM_PROMPT = """You are an expert Indian matrimonial biodata parser.
 You can read English, Hindi, and Marathi text directly from images.
@@ -420,6 +417,123 @@ async def _call_groq_vision(client, model: str, image_b64: str, mime: str) -> st
     return response.choices[0].message.content
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# 5b.  GEMINI VISION EXTRACTION  — same pipeline, different model provider
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@retry(
+    retry=retry_if_exception_type(Exception),
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(multiplier=1, min=2, max=15),
+    reraise=True,
+)
+async def _call_gemini_vision(client, model: str, image_b64: str, mime: str) -> str:
+    """Send a base64-encoded image to Gemini vision model (OpenAI-compatible endpoint)."""
+    response = await client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": VISION_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{mime};base64,{image_b64}",
+                        },
+                    },
+                    {
+                        "type": "text",
+                        "text": SINGLE_PASS_PROMPT.format(text="[See image above — read ALL text directly from the image]"),
+                    },
+                ],
+            },
+        ],
+        temperature=0.0,
+        max_tokens=2048,
+        response_format={"type": "json_object"},
+    )
+    return response.choices[0].message.content
+
+
+async def parse_biodata_gemini_vision(
+    file_path: str,
+    file_type: str,
+    gemini_client,
+    model: Optional[str] = None,
+) -> ParsedBiodata:
+    """
+    Gemini vision-mode extraction: sends image/PDF directly to Gemini vision LLM.
+
+    Args:
+        file_path:   Absolute path to the uploaded file
+        file_type:   "image" or "pdf"
+        gemini_client: AsyncOpenAI client pointed at Gemini endpoint
+        model:       Gemini model name (defaults to settings.GEMINI_MODEL)
+
+    Returns:
+        ParsedBiodata — always returns, never raises.
+    """
+    from app.config import settings
+
+    vision_model = model or settings.GEMINI_MODEL
+    logger.info(f"Gemini vision mode: {file_path} using {vision_model}")
+
+    try:
+        if file_type == "pdf":
+            pages = _pdf_page_to_base64(file_path)
+        else:
+            mime = mimetypes.guess_type(file_path)[0] or "image/jpeg"
+            with open(file_path, "rb") as f:
+                raw_bytes = f.read()
+            pages = [(base64.b64encode(raw_bytes).decode(), mime)]
+
+        best: Optional[ParsedBiodata] = None
+
+        for page_num, (b64, mime) in enumerate(pages):
+            logger.info(f"Gemini vision: processing page {page_num + 1}/{len(pages)}")
+            try:
+                raw   = await _call_gemini_vision(gemini_client, vision_model, b64, mime)
+                clean = _clean_response(raw)
+                data  = json.loads(clean)
+
+                profiles_raw: list[dict] = data.pop("profiles", []) or []
+
+                result = ParsedBiodata.model_validate(data)
+                result._extra_profiles = [
+                    ParsedBiodata.model_validate(p) for p in profiles_raw
+                    if isinstance(p, dict)
+                ]
+
+                logger.info(
+                    f"Gemini vision page {page_num+1} OK | "
+                    f"name={result.personal.full_name!r} | "
+                    f"conf={result.ai_confidence:.2f} | "
+                    f"extra_profiles={len(result._extra_profiles)}"
+                )
+
+                if best is None or result.ai_confidence > best.ai_confidence:
+                    best = result
+
+                if result.ai_confidence >= 0.7:
+                    break
+
+            except (json.JSONDecodeError, Exception) as e:
+                logger.warning(f"Gemini vision page {page_num+1} failed: {e}")
+                continue
+
+        if best is not None:
+            return best
+
+        logger.error("Gemini vision extraction: all pages failed")
+        return ParsedBiodata()
+
+    except Exception as e:
+        logger.error(f"Gemini vision extraction failed: {e}")
+        return ParsedBiodata()
+
+
 def _pdf_page_to_base64(file_path: str) -> list[tuple[str, str]]:
     """
     Convert each page of a PDF to a base64 JPEG.
@@ -469,7 +583,7 @@ async def parse_biodata_vision(
     """
     from app.config import settings
 
-    vision_model = model or _VISION_MODELS[0]
+    vision_model = model or settings.GROQ_VISION_MODEL
     logger.info(f"Vision mode: {file_path} using {vision_model}")
 
     try:

@@ -38,11 +38,19 @@ const MODES = {
     notBest: ['Marathi/Hindi handwriting', 'WhatsApp photo quality'],
   },
   vision: {
-    id: 'vision', label: 'Direct Vision AI', icon: Eye,
+    id: 'vision', label: 'Groq Vision AI', icon: Eye,
     color: 'text-violet-600', border: 'border-violet-400/50', bg: 'bg-violet-50', badge: 'bg-violet-100 text-violet-700',
-    title: 'Vision AI (Recommended)',
-    desc: 'AI vision model — best for Marathi, Hindi, and phone photos.',
+    title: 'Groq Vision AI',
+    desc: 'Llama 4 Scout — fast, good for Marathi/Hindi on Groq hardware.',
     works: ['Marathi / Hindi biodata', 'Phone photos', 'WhatsApp images', 'Newspaper biodata pages'],
+    notBest: ['DOCX / TXT files (falls back to OCR automatically)'],
+  },
+  gemini: {
+    id: 'gemini', label: 'Gemini Vision AI', icon: Eye,
+    color: 'text-blue-600', border: 'border-blue-400/50', bg: 'bg-blue-50', badge: 'bg-blue-100 text-blue-700',
+    title: 'Gemini Vision AI (Recommended)',
+    desc: 'Google Gemini 2.5 — best for Marathi/Hindi handwriting and complex layouts.',
+    works: ['Marathi / Hindi text', 'Handwritten biodata', 'Complex layouts', 'Phone photos'],
     notBest: ['DOCX / TXT files (falls back to OCR automatically)'],
   },
 }
@@ -131,8 +139,8 @@ export default function UploadBiodata() {
                     <Icon size={16} className={selected ? m.color : 'text-surface-400'} />
                   </div>
                   <span className={`text-sm font-bold ${selected ? m.color : 'text-surface-700'}`}>{m.title}</span>
-                  {m.id === 'vision' && (
-                    <span className="badge bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white text-[10px]">
+                  {m.id === 'gemini' && (
+                    <span className="badge bg-gradient-to-r from-blue-500 to-cyan-500 text-white text-[10px]">
                       <Sparkles size={9} />BEST
                     </span>
                   )}
@@ -216,6 +224,7 @@ export default function UploadBiodata() {
               {uploads.map((u) => (
                 <motion.div key={u.id} variants={listItem} className="px-5">
                   <UploadRow upload={u} isActive={u.id === activeId}
+                    progress={u.id === activeId && stream.status === 'streaming' ? stream.progress : undefined}
                     onDelete={() => deleteMutation.mutate(u.id)} onRetry={() => retryMutation.mutate(u.id)}
                     isDeleting={deleteMutation.isPending && deleteMutation.variables === u.id}
                     isRetrying={retryMutation.isPending && retryMutation.variables === u.id} />
@@ -318,12 +327,13 @@ function StreamPanel({ stream, mode }) {
   )
 }
 
-function UploadRow({ upload, isActive, onDelete, onRetry, isDeleting, isRetrying }) {
+function UploadRow({ upload, isActive, onDelete, onRetry, isDeleting, isRetrying, progress }) {
   const { Icon, color, bg, label } = getStatus(upload.status)
   const canRetry = ['failed', 'pending'].includes(upload.status)
   const canDelete = upload.status !== 'processing'
   const modeInfo = MODES[upload.extraction_mode] || MODES.ocr
   const ModeIcon = modeInfo.icon
+  const isPendingOrProcessing = ['pending', 'processing'].includes(upload.status)
 
   return (
     <div className={`flex items-center justify-between py-4 gap-3 transition-colors ${isActive ? 'bg-primary-50/40 -mx-5 px-5' : ''}`}>
@@ -342,12 +352,29 @@ function UploadRow({ upload, isActive, onDelete, onRetry, isDeleting, isRetrying
         </div>
       </div>
       <div className="flex items-center gap-1.5 shrink-0">
-        <span className={`badge ${color} ${bg}`}>
-          <Icon size={11} />{label}
-          {upload.status === 'processing' && isActive && (
-            <span className="ml-1.5 w-1.5 h-1.5 rounded-full bg-primary-500 animate-ping inline-block" />
-          )}
-        </span>
+        {isPendingOrProcessing ? (
+          <div className="flex items-center gap-2 min-w-[90px]">
+            <div className="flex-1 h-1.5 bg-surface-200 rounded-full overflow-hidden relative">
+              {progress !== undefined ? (
+                <div
+                  className={`h-full rounded-full transition-all duration-700 ease-out ${
+                    upload.status === 'pending' ? 'bg-amber-400' : 'bg-primary-500'
+                  }`}
+                  style={{ width: `${Math.min(progress, 100)}%` }}
+                />
+              ) : (
+                <div className={`h-full rounded-full w-1/3 ${upload.status === 'pending' ? 'bg-amber-400' : 'bg-primary-500'} animate-progress`} />
+              )}
+            </div>
+            {progress !== undefined && (
+              <span className="text-xs font-semibold text-surface-500 shrink-0 tabular-nums">{Math.round(progress)}%</span>
+            )}
+          </div>
+        ) : (
+          <span className={`badge ${color} ${bg}`}>
+            <Icon size={11} />{label}
+          </span>
+        )}
         {canRetry && (
           <button onClick={onRetry} disabled={isRetrying} title="Retry"
             className="btn-ghost !p-1.5">
